@@ -8,21 +8,21 @@ import { FirebaseService } from '../firebase.service';
 
 @Injectable()
 export class FirebaseAuthGuard implements CanActivate {
-  constructor(private firebaseService: FirebaseService) {}
+  constructor(private firebaseAdmin: FirebaseService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const authHeader = request.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Authorization header not found');
+      throw new UnauthorizedException('No authentication token provided');
     }
 
-    const token = authHeader.split(' ')[1];
+    const token = authHeader.substring(7);
 
     try {
-      const decodedToken = await this.firebaseService.verifyToken(token);
-      request.user = decodedToken;
+      const decodedToken = await this.firebaseAdmin.verifyIdToken(token);
+      request.user = decodedToken; // Attach decoded token to request
       return true;
     } catch (error) {
       throw new UnauthorizedException('Invalid or expired token');

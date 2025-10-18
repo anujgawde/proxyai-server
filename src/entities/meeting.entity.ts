@@ -1,9 +1,11 @@
-import { Entity, PrimaryColumn, Column } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
+import { TranscriptEntry } from './transcript-entry.entity';
+import { Summary } from './summary.entity';
 
 @Entity('meetings')
 export class Meeting {
-  @PrimaryColumn('int', { name: 'id', nullable: false })
-  id: number;
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
 
   @Column({ type: 'varchar', length: 255, nullable: false, name: 'title' })
   title: string;
@@ -14,18 +16,29 @@ export class Meeting {
   @Column({ type: 'varchar', length: 255, nullable: false, name: 'created_by' })
   createdBy: string;
 
-  @Column({ type: 'timestamptz', nullable: false, name: 'scheduled_for' })
-  scheduledFor: Date;
+  @Column({ type: 'date', nullable: false, name: 'scheduled_on' })
+  scheduledOn: Date;
 
-  @Column({ type: 'timestamptz', nullable: false, name: 'started_at' })
-  startedAt: Date;
+  @Column({ type: 'timestamptz', nullable: false, name: 'scheduled_start' })
+  scheduledStart: Date;
 
-  @Column({ type: 'timestamptz', nullable: false, name: 'ended_at' })
-  endedAt: Date;
+  @Column({ type: 'timestamptz', nullable: false, name: 'scheduled_end' })
+  scheduledEnd: Date;
 
-  //   Todo: Set up column with enum data type.
-  //   @Column({ type: 'enum', length: 255, nullable: false, name: 'status' })
-  //   status: string;
+  @Column({ type: 'timestamptz', nullable: true, name: 'started_at' })
+  startedAt: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true, name: 'ended_at' })
+  endedAt: Date | null;
+
+  @Column({
+    type: 'varchar',
+    length: 20,
+    nullable: false,
+    name: 'status',
+    default: 'scheduled',
+  })
+  status: 'scheduled' | 'ongoing' | 'ended';
 
   @Column({
     type: 'varchar',
@@ -51,4 +64,16 @@ export class Meeting {
     onUpdate: 'CURRENT_TIMESTAMP',
   })
   updatedAt: Date;
+
+  @OneToMany(() => TranscriptEntry, (transcript) => transcript.meeting, {
+    cascade: true,
+    eager: false,
+  })
+  transcript: TranscriptEntry[];
+
+  @OneToMany(() => Summary, (summary) => summary.meeting, {
+    cascade: true,
+    eager: false,
+  })
+  summaries: Summary[];
 }

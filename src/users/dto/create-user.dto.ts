@@ -50,14 +50,8 @@ export class UpdateUserDto {
   @IsOptional()
   lastName?: string;
 
-  @IsString()
-  @IsOptional()
-  displayName?: string;
-
-  @IsString()
-  @IsOptional()
-  photoURL?: string;
-
-  @IsOptional()
-  metadata?: Record<string, any>;
+  // Todo: Allow user to edit these too
+  // @IsString()
+  // @IsOptional()
+  // photoURL?: string;
 }

@@ -7,6 +7,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import databaseConfig from './config/database.config';
 import firebaseConfig from './config/firebase.config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { MeetingsModule } from './meetings/meetings.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
     }),
     AuthModule,
     UsersModule,
+    MeetingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

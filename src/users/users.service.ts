@@ -35,7 +35,6 @@ export class UsersService {
       const existingUser = await this.usersRepository.findOne({
         where: [{ email: signUpData.email }],
       });
-      console.log(signUpData, existingUser);
       if (existingUser) {
         return existingUser;
       }
@@ -109,7 +108,7 @@ export class UsersService {
     }
   }
 
-  async getUser(id: string): Promise<User> {
+  async findById(id: string): Promise<User> {
     try {
       const user = await this.usersRepository.findOne({
         where: { firebaseUid: id },
@@ -129,4 +128,49 @@ export class UsersService {
       );
     }
   }
+
+  async updateById(
+    firebaseUid: string,
+    updateData: UpdateUserDto,
+  ): Promise<User> {
+    try {
+      const user = await this.usersRepository.findOne({
+        where: { firebaseUid },
+      });
+
+      if (!user) {
+        throw new NotFoundException(
+          `User with Firebase UID ${firebaseUid} not found`,
+        );
+      }
+
+      // Update only the fields that are provided
+      if (updateData.firstName !== undefined) {
+        user.firstName = updateData.firstName;
+      }
+
+      if (updateData.lastName !== undefined) {
+        user.lastName = updateData.lastName;
+      }
+
+      // Todo: Uncomment after storing profile images in media storage.
+      // if (updateData.photoURL !== undefined) {
+      //   user.photoURL = updateData.photoURL;
+      // }
+
+      // Save the updated user
+      const updatedUser = await this.usersRepository.save(user);
+      return updatedUser;
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        `Failed to update user: ${error.message}`,
+      );
+    }
+  }
+
+  async findAll() {}
+  async deleteById(id: string) {}
 }
