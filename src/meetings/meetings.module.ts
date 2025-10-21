@@ -6,11 +6,21 @@ import { FirebaseService } from 'src/auth/firebase.service';
 import { User } from 'src/entities/user.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Meeting } from 'src/entities/meeting.entity';
+import { MeetingsGateway } from './meetings.gateway';
+import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
+import { Summary } from 'src/entities/summary.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, Meeting])],
+  imports: [
+    TypeOrmModule.forFeature([User, Meeting, TranscriptEntry, Summary]),
+  ],
   controllers: [MeetingsController],
-  providers: [MeetingsService, FirebaseService, FirebaseAuthGuard],
+  providers: [
+    MeetingsService,
+    FirebaseService,
+    FirebaseAuthGuard,
+    MeetingsGateway,
+  ],
   exports: [MeetingsService],
 })
 export class MeetingsModule {}

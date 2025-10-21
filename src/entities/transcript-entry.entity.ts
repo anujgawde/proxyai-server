@@ -1,4 +1,3 @@
-// src/entities/transcript-entry.entity.ts
 import {
   Entity,
   PrimaryGeneratedColumn,

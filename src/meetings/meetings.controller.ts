@@ -39,7 +39,6 @@ export class MeetingsController {
 
   @Get(':id')
   async getMeetingById(@Param('id') id: string) {
-    console.log('get by id');
     return this.meetingsService.getMeetingById(id);
   }
 
@@ -50,6 +49,40 @@ export class MeetingsController {
   ) {
     return this.meetingsService.scheduleMeeting(user.uid, createMeetingDto);
   }
+
+  @Post(':id/start')
+  async startMeeting(
+    @CurrentUser() user: DecodedIdToken,
+    @Param('id') id: string,
+  ) {
+    return this.meetingsService.startMeeting(id, user.uid);
+  }
+
+  @Post(':id/end')
+  async endMeeting(
+    @CurrentUser() user: DecodedIdToken,
+    @Param('id') id: string,
+  ) {
+    return this.meetingsService.endMeeting(id, user.uid);
+  }
+
+  @Get(':id/transcripts')
+  async getMeetingTranscripts(@Param('id') id: string) {
+    return this.meetingsService.getMeetingTranscripts(id);
+  }
+
+  // @Post(':id/transcript')
+  // async addTranscriptEntry(
+  //   @Param('id') id: string,
+  //   @Body()
+  //   entry: {
+  //     speaker: string;
+  //     text: string;
+  //     timestamp: string;
+  //   },
+  // ) {
+  //   return this.meetingsService.addTranscriptEntry(id, entry);
+  // }
 
   // @Patch(':id')
   // async updateMeeting(

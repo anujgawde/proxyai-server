@@ -6,8 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User, AuthProviderEnum } from '../entities/user.entity';
-import { CreateUserDto, UpdateUserDto } from './dto/create-user.dto';
-import * as admin from 'firebase-admin';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { SignUpDto } from './dto/sign-up.dto';
 
 @Injectable()

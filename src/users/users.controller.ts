@@ -13,7 +13,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 import { UsersService } from './users.service';
 import { SignUpDto } from './dto/sign-up.dto';
-import { UpdateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { FirebaseAuthGuard } from 'src/auth/guards/firebae-auth.guard';
 
 @Controller('users')
