@@ -9,6 +9,7 @@ import { Meeting } from 'src/entities/meeting.entity';
 import { MeetingsGateway } from './meetings.gateway';
 import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
 import { Summary } from 'src/entities/summary.entity';
+import { TranscriptsService } from 'src/transcripts/transcripts.service';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { Summary } from 'src/entities/summary.entity';
     FirebaseService,
     FirebaseAuthGuard,
     MeetingsGateway,
+    TranscriptsService,
   ],
   exports: [MeetingsService],
 })

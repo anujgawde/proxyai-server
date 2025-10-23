@@ -8,19 +8,20 @@ import {
 } from 'typeorm';
 import { Meeting } from './meeting.entity';
 
+export interface TranscriptData {
+  speakerEmail: string;
+  speakerName: string;
+  text: string;
+  timestamp: string;
+}
+
 @Entity('transcript_entries')
 export class TranscriptEntry {
   @PrimaryGeneratedColumn('increment')
   id: number;
 
-  @Column({ type: 'varchar', length: 255 })
-  speaker: string;
-
-  @Column({ type: 'text' })
-  text: string;
-
-  @Column({ type: 'timestamp' })
-  timestamp: Date;
+  @Column({ type: 'jsonb' })
+  transcripts: TranscriptData[];
 
   @ManyToOne(() => Meeting, (meeting) => meeting.transcript, {
     onDelete: 'CASCADE',
@@ -31,6 +32,9 @@ export class TranscriptEntry {
   @Column({ type: 'uuid', name: 'meeting_id' })
   meetingId: string;
 
-  @CreateDateColumn({ name: 'created_at' })
-  createdAt: Date;
+  @CreateDateColumn({ name: 'time_start' })
+  timeStart: string;
+
+  @CreateDateColumn({ name: 'time_end' })
+  timeEnd: string;
 }

@@ -10,6 +10,8 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { MeetingsService } from './meetings.service';
+import { TranscriptsService } from 'src/transcripts/transcripts.service';
+import { forwardRef, Inject } from '@nestjs/common';
 
 interface RecordingUser {
   userId: string;
@@ -28,7 +30,7 @@ interface TranscriptEntry {
 
 @WebSocketGateway({
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: process.env.FRONTEND_URL,
     credentials: true,
   },
 })
@@ -43,7 +45,12 @@ export class MeetingsGateway
   private userSocketsByEmail = new Map<string, string>();
   private recordingUsers = new Map<string, Map<string, RecordingUser>>();
 
-  constructor(private meetingsService: MeetingsService) {}
+  constructor(
+    @Inject(forwardRef(() => MeetingsService))
+    private meetingsService: MeetingsService,
+    @Inject(forwardRef(() => TranscriptsService))
+    private transcriptsService: TranscriptsService,
+  ) {}
 
   afterInit(server: Server) {
     console.log('WebSocket Gateway initialized');
@@ -194,37 +201,34 @@ export class MeetingsGateway
     @MessageBody()
     data: {
       meetingId: string;
-      speaker: string;
+      speakerEmail: string;
+      speakerName: string;
       text: string;
-      timestamp?: string;
     },
   ) {
-    const {
-      meetingId,
-      speaker,
-      text,
-      timestamp = new Date().toISOString(),
-    } = data;
+    const { meetingId, speakerEmail, speakerName, text } = data;
 
     try {
       console.log(
-        `Transcript update for meeting ${meetingId}: ${speaker}: ${text.substring(0, 50)}...`,
+        `Transcript update for meeting ${meetingId}: ${speakerEmail}: ${text.substring(0, 50)}...`,
       );
 
-      const transcriptEntry: TranscriptEntry = {
-        id: `${speaker}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        speaker,
+      // Add to buffer - timeStart and timeEnd will be set by the service
+      this.transcriptsService.addTranscript(
+        meetingId,
+        speakerEmail,
+        speakerName,
+        text,
+      );
+
+      // Create broadcast entry with timestamp for real-time display
+      const transcriptEntry = {
+        speakerName: speakerName,
+        speakerEmail: speakerEmail,
         text: text.trim(),
-        timestamp,
+        timestamp: new Date().toISOString(),
         meetingId,
       };
-
-      // Save to database via service
-      await this.meetingsService.addTranscriptEntry(meetingId, {
-        speaker,
-        text: text.trim(),
-        timestamp,
-      });
 
       // Broadcast to meeting room
       this.server
@@ -236,6 +240,32 @@ export class MeetingsGateway
     } catch (error) {
       console.error('Error handling transcript update:', error);
     }
+  }
+
+  broadcastTranscriptsFlushed(
+    meetingId: string,
+    data: {
+      entryId: number;
+      transcripts: any[];
+      timeStart: string;
+      timeEnd: string;
+    },
+  ) {
+    console.log(
+      `Broadcasting transcripts-flushed for meeting ${meetingId}, ${data.transcripts.length} segments`,
+    );
+
+    // Broadcast to meeting room
+    this.server.to(`meeting-${meetingId}`).emit('transcripts-flushed', {
+      meetingId,
+      ...data,
+    });
+
+    // Also broadcast to all clients for dashboard updates
+    this.server.emit('transcripts-flushed', {
+      meetingId,
+      ...data,
+    });
   }
 
   async broadcastMeetingUpdate(meeting: any, eventType: string) {
@@ -263,7 +293,7 @@ export class MeetingsGateway
     });
 
     console.log(
-      `✅ Broadcasted ${eventType} to room, all clients, and ${sentCount}/${meeting.participants.length} participants directly`,
+      `Broadcasted ${eventType} to room, all clients, and ${sentCount}/${meeting.participants.length} participants directly`,
     );
   }
 

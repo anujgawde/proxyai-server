@@ -8,6 +8,7 @@ import databaseConfig from './config/database.config';
 import firebaseConfig from './config/firebase.config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MeetingsModule } from './meetings/meetings.module';
+import { TranscriptEntry } from './entities/transcript-entry.entity';
 
 @Module({
   imports: [
@@ -44,6 +45,6 @@ import { MeetingsModule } from './meetings/meetings.module';
     MeetingsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, TranscriptEntry],
 })
 export class AppModule {}

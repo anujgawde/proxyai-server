@@ -2,8 +2,6 @@ import {
   Controller,
   Get,
   Post,
-  Patch,
-  Delete,
   Body,
   Param,
   Query,
@@ -67,8 +65,12 @@ export class MeetingsController {
   }
 
   @Get(':id/transcripts')
-  async getMeetingTranscripts(@Param('id') id: string) {
-    return this.meetingsService.getMeetingTranscripts(id);
+  async getMeetingTranscripts(
+    @Param('id') id: string,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 1,
+  ) {
+    return this.meetingsService.getMeetingTranscripts(id, page, limit);
   }
 
   // @Post(':id/transcript')

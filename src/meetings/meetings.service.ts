@@ -9,6 +9,7 @@ import { Repository } from 'typeorm';
 import { Meeting } from 'src/entities/meeting.entity';
 import { User } from 'src/entities/user.entity';
 import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
+import { TranscriptsService } from 'src/transcripts/transcripts.service';
 
 @Injectable()
 export class MeetingsService {
@@ -20,7 +21,8 @@ export class MeetingsService {
     @InjectRepository(User)
     private usersRepository: Repository<User>,
     @InjectRepository(TranscriptEntry)
-    private transcriptRepository: Repository<TranscriptEntry>,
+    private transcriptsRepository: Repository<TranscriptEntry>,
+    private transcriptsService: TranscriptsService,
   ) {}
 
   setGateway(gateway: any) {
@@ -68,8 +70,6 @@ export class MeetingsService {
 
     return {
       ...savedMeeting,
-      // transcript: [],
-      // summaries: [],
     };
   }
 
@@ -77,7 +77,6 @@ export class MeetingsService {
     try {
       const meeting = await this.meetingsRepository.findOne({
         where: { id: meetingId },
-        relations: ['transcript', 'summaries'],
       });
 
       if (!meeting) {
@@ -153,6 +152,9 @@ export class MeetingsService {
       throw new Error('User not authorized for this meeting');
     }
 
+    // Flush remaining transcripts before meeting ends
+    await this.transcriptsService.flushAndClearMeeting(id);
+
     meeting.status = 'ended';
     meeting.endedAt = new Date();
 
@@ -165,32 +167,72 @@ export class MeetingsService {
     return updatedMeeting;
   }
 
-  async addTranscriptEntry(
-    id: string,
-    entry: {
-      speaker: string;
-      text: string;
-      timestamp: string;
-    },
-  ): Promise<TranscriptEntry> {
+  /**
+   * Get paginated transcripts for a meeting
+   */
+  async getMeetingTranscripts(
+    meetingId: string,
+    page: number = 1,
+    limit: number = 50,
+  ) {
+    // Validate meeting exists
     const meeting = await this.meetingsRepository.findOne({
-      where: { id },
+      where: { id: meetingId },
     });
 
     if (!meeting) {
       throw new NotFoundException('Meeting not found');
     }
 
-    // Create transcript with proper meeting relation
-    const transcriptEntity = this.transcriptRepository.create({
-      speaker: entry.speaker,
-      text: entry.text,
-      timestamp: new Date(entry.timestamp),
-      meeting: meeting,
+    // Pagination Calculation
+    const skip = (page - 1) * limit;
+
+    // Paginated transcript entries
+    const [transcriptEntries, totalEntries] =
+      await this.transcriptsRepository.findAndCount({
+        where: { meetingId },
+        order: { timeStart: 'DESC' },
+        skip,
+        take: limit,
+      });
+
+    // Flatten transcript segments from entries
+    const allSegments = transcriptEntries.flatMap((entry) =>
+      entry.transcripts.map((segment) => ({
+        ...segment,
+        entryId: entry.id,
+        batchTimeStart: entry.timeStart,
+        batchTimeEnd: entry.timeEnd,
+      })),
+    );
+
+    // Sorting (Newest First)
+    const transcripts = allSegments.sort((a, b) => {
+      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
     });
 
-    return await this.transcriptRepository.save(transcriptEntity);
-  }
+    // Todo: Get only count instead of all transcripts
+    // Calculate total segments across all entries
+    const allEntries = await this.transcriptsRepository.find({
+      where: { meetingId },
+      select: ['transcripts'],
+    });
 
-  async getMeetingTranscripts(id: string) {}
+    const totalSegments = allEntries.reduce(
+      (sum, entry) => sum + entry.transcripts.length,
+      0,
+    );
+
+    return {
+      data: transcripts,
+      pagination: {
+        page,
+        limit,
+        totalEntries, // Total transcript entries (batches)
+        totalSegments, // Total individual transcript segments
+        totalPages: Math.ceil(totalEntries / limit),
+        hasMore: skip + limit < totalEntries,
+      },
+    };
+  }
 }
