@@ -10,6 +10,7 @@ import { Meeting } from 'src/entities/meeting.entity';
 import { User } from 'src/entities/user.entity';
 import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
 import { TranscriptsService } from 'src/transcripts/transcripts.service';
+import { Summary } from 'src/entities/summary.entity';
 
 @Injectable()
 export class MeetingsService {
@@ -22,6 +23,8 @@ export class MeetingsService {
     private usersRepository: Repository<User>,
     @InjectRepository(TranscriptEntry)
     private transcriptsRepository: Repository<TranscriptEntry>,
+    @InjectRepository(Summary)
+    private summariesRepository: Repository<Summary>,
     private transcriptsService: TranscriptsService,
   ) {}
 
@@ -234,5 +237,49 @@ export class MeetingsService {
         hasMore: skip + limit < totalEntries,
       },
     };
+  }
+
+  async getMeetingSummaries(
+    meetingId: string,
+    page: number = 1,
+    limit: number = 10,
+  ) {
+    const meeting = await this.meetingsRepository.findOne({
+      where: { id: meetingId },
+    });
+
+    if (!meeting) {
+      throw new NotFoundException('Meeting not found');
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [summaries, totalSummaries] =
+      await this.summariesRepository.findAndCount({
+        where: { meetingId },
+        order: { createdAt: 'DESC' }, // Newest first
+        skip,
+        take: limit,
+      });
+
+    return {
+      data: summaries,
+      pagination: {
+        page,
+        limit,
+        totalSummaries,
+        totalPages: Math.ceil(totalSummaries / limit),
+        hasMore: skip + limit < totalSummaries,
+      },
+    };
+  }
+
+  async getLatestSummary(meetingId: string) {
+    const summary = await this.summariesRepository.findOne({
+      where: { meetingId },
+      order: { createdAt: 'DESC' },
+    });
+
+    return summary;
   }
 }

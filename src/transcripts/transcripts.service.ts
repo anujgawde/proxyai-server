@@ -14,6 +14,8 @@ import {
 } from 'src/entities/transcript-entry.entity';
 import { Meeting } from 'src/entities/meeting.entity';
 import { MeetingsGateway } from 'src/meetings/meetings.gateway';
+import { GeminiService } from 'src/gemini/gemini.service';
+import { Summary } from 'src/entities/summary.entity';
 
 interface BufferMetadata {
   transcripts: TranscriptData[];
@@ -32,8 +34,13 @@ export class TranscriptsService implements OnModuleDestroy {
     private transcriptRepository: Repository<TranscriptEntry>,
     @InjectRepository(Meeting)
     private meetingsRepository: Repository<Meeting>,
-    @Inject(forwardRef(() => MeetingsGateway)) // 🔥 Add forwardRef here
+    @InjectRepository(Summary)
+    private summaryRepository: Repository<Summary>,
+    @Inject(forwardRef(() => MeetingsGateway))
     private gateway: MeetingsGateway,
+
+    @Inject(forwardRef(() => GeminiService))
+    private geminiService: GeminiService,
   ) {}
 
   addTranscript(
@@ -150,6 +157,8 @@ export class TranscriptsService implements OnModuleDestroy {
           timeEnd: timeEnd,
         });
       }
+
+      this.generateAndSaveSummary(meetingId, transcriptsToSave);
     } catch (error) {
       this.logger.error(
         `Error flushing transcripts for meeting ${meetingId}:`,
@@ -161,6 +170,58 @@ export class TranscriptsService implements OnModuleDestroy {
   async flushAndClearMeeting(meetingId: string): Promise<void> {
     await this.flushMeetingBuffer(meetingId);
     this.clearMeetingBuffer(meetingId);
+  }
+
+  // src/transcripts/transcripts.service.ts - Only update the generateAndSaveSummary method
+
+  private async generateAndSaveSummary(
+    meetingId: string,
+    transcripts: TranscriptData[],
+  ): Promise<void> {
+    try {
+      this.logger.log(`Generating summary for meeting ${meetingId}...`);
+
+      // Generate summary using Gemini
+      const summaryContent =
+        await this.geminiService.generateSummary(transcripts);
+
+      // Get meeting
+      const meeting = await this.meetingsRepository.findOne({
+        where: { id: meetingId },
+      });
+
+      if (!meeting) {
+        this.logger.warn(`Meeting ${meetingId} not found for summary`);
+        return;
+      }
+
+      // Save summary (simplified schema)
+      const summary = this.summaryRepository.create({
+        content: summaryContent,
+        meetingId: meetingId,
+        meeting: meeting,
+      });
+
+      const savedSummary = await this.summaryRepository.save(summary);
+
+      this.logger.log(
+        `Summary saved for meeting ${meetingId}: ${savedSummary.id}`,
+      );
+
+      // Broadcast summary created
+      if (this.gateway) {
+        this.gateway.broadcastSummaryCreated(meetingId, {
+          id: savedSummary.id,
+          content: savedSummary.content,
+          createdAt: savedSummary.createdAt,
+        });
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error generating/saving summary for meeting ${meetingId}:`,
+        error,
+      );
+    }
   }
 
   private clearMeetingBuffer(meetingId: string): void {

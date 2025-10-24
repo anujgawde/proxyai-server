@@ -13,9 +13,6 @@ export class Summary {
   @PrimaryGeneratedColumn('increment')
   id: number;
 
-  @Column({ type: 'timestamp' })
-  timestamp: Date;
-
   @Column({ type: 'text' })
   content: string;
 
@@ -29,5 +26,5 @@ export class Summary {
   meetingId: string;
 
   @CreateDateColumn({ name: 'created_at' })
-  createdAt: Date;
+  createdAt: string;
 }

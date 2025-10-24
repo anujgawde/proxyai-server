@@ -10,6 +10,7 @@ import { MeetingsGateway } from './meetings.gateway';
 import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
 import { Summary } from 'src/entities/summary.entity';
 import { TranscriptsService } from 'src/transcripts/transcripts.service';
+import { GeminiService } from 'src/gemini/gemini.service';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { TranscriptsService } from 'src/transcripts/transcripts.service';
     FirebaseAuthGuard,
     MeetingsGateway,
     TranscriptsService,
+    GeminiService,
   ],
   exports: [MeetingsService],
 })

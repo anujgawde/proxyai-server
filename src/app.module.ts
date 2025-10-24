@@ -9,6 +9,7 @@ import firebaseConfig from './config/firebase.config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MeetingsModule } from './meetings/meetings.module';
 import { TranscriptEntry } from './entities/transcript-entry.entity';
+import { GeminiService } from './gemini/gemini.service';
 
 @Module({
   imports: [
@@ -45,6 +46,6 @@ import { TranscriptEntry } from './entities/transcript-entry.entity';
     MeetingsModule,
   ],
   controllers: [AppController],
-  providers: [AppService, TranscriptEntry],
+  providers: [AppService, TranscriptEntry, GeminiService],
 })
 export class AppModule {}

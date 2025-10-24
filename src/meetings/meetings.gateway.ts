@@ -242,6 +242,28 @@ export class MeetingsGateway
     }
   }
 
+  broadcastSummaryCreated(
+    meetingId: string,
+    summary: {
+      id: number;
+      content: string;
+      createdAt: string;
+    },
+  ) {
+    console.log(`Broadcasting summary-created for meeting ${meetingId}`);
+
+    const summaryData = {
+      meetingId,
+      ...summary,
+    };
+
+    // Broadcast to meeting room
+    this.server.to(`meeting-${meetingId}`).emit('summary-created', summaryData);
+
+    // Also broadcast to all clients for dashboard updates
+    this.server.emit('summary-created', summaryData);
+  }
+
   broadcastTranscriptsFlushed(
     meetingId: string,
     data: {
