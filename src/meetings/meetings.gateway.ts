@@ -11,21 +11,14 @@ import {
 import { Server, Socket } from 'socket.io';
 import { MeetingsService } from './meetings.service';
 import { TranscriptsService } from 'src/transcripts/transcripts.service';
-import { forwardRef, Inject } from '@nestjs/common';
+import { RAGService } from 'src/rag/rag.service';
+import { forwardRef, Inject, Logger } from '@nestjs/common';
 
 interface RecordingUser {
   userId: string;
   isRecording: boolean;
   lastActivity: string;
   socketId: string;
-}
-
-interface TranscriptEntry {
-  id: string;
-  speaker: string;
-  text: string;
-  timestamp: string;
-  meetingId: string;
 }
 
 @WebSocketGateway({
@@ -40,6 +33,7 @@ export class MeetingsGateway
   @WebSocketServer()
   server: Server;
 
+  private readonly logger = new Logger(MeetingsGateway.name);
   private userSockets: Map<string, Socket> = new Map();
   private activeMeetings = new Map<string, Set<string>>();
   private userSocketsByEmail = new Map<string, string>();
@@ -50,19 +44,21 @@ export class MeetingsGateway
     private meetingsService: MeetingsService,
     @Inject(forwardRef(() => TranscriptsService))
     private transcriptsService: TranscriptsService,
+    @Inject(forwardRef(() => RAGService))
+    private ragService: RAGService,
   ) {}
 
   afterInit(server: Server) {
-    console.log('WebSocket Gateway initialized');
+    this.logger.log('WebSocket Gateway initialized');
     this.meetingsService.setGateway(this);
   }
 
   handleConnection(client: Socket) {
-    console.log(`Client connected: ${client.id}`);
+    this.logger.log(`Client connected: ${client.id}`);
   }
 
   handleDisconnect(client: Socket) {
-    console.log(`Client disconnected: ${client.id}`);
+    this.logger.log(`Client disconnected: ${client.id}`);
     this.cleanupUserOnDisconnect(client.id);
   }
 
@@ -72,7 +68,7 @@ export class MeetingsGateway
     @ConnectedSocket() client: Socket,
   ) {
     const { email } = data;
-    console.log(`Registering user ${email} for global updates`);
+    this.logger.log(`Registering user ${email} for global updates`);
 
     this.userSockets.set(email, client);
     this.userSocketsByEmail.set(email, client.id);
@@ -87,7 +83,7 @@ export class MeetingsGateway
   ) {
     const { meetingId, userEmail } = data;
 
-    console.log(`User ${userEmail} joining meeting ${meetingId}`);
+    this.logger.log(`User ${userEmail} joining meeting ${meetingId}`);
 
     this.userSockets.set(userEmail, client);
     this.userSocketsByEmail.set(userEmail, client.id);
@@ -105,9 +101,7 @@ export class MeetingsGateway
 
     const meeting = await this.meetingsService.getMeetingById(meetingId);
     if (meeting) {
-      client.emit('meeting-joined', {
-        meeting,
-      });
+      client.emit('meeting-joined', { meeting });
     }
 
     const meetingRecordingUsers = this.recordingUsers.get(meetingId);
@@ -122,7 +116,7 @@ export class MeetingsGateway
       .to(`meeting-${meetingId}`)
       .emit('user-joined-meeting', { userEmail });
 
-    console.log(`User ${userEmail} joined meeting ${meetingId}`);
+    this.logger.log(`User ${userEmail} joined meeting ${meetingId}`);
   }
 
   @SubscribeMessage('leave-meeting')
@@ -132,7 +126,7 @@ export class MeetingsGateway
   ) {
     const { meetingId, userEmail } = data;
 
-    console.log(`User ${userEmail} leaving meeting ${meetingId}`);
+    this.logger.log(`User ${userEmail} leaving meeting ${meetingId}`);
 
     await client.leave(`meeting-${meetingId}`);
     this.cleanupUserFromMeeting(meetingId, userEmail, client.id);
@@ -153,7 +147,7 @@ export class MeetingsGateway
   ) {
     const { meetingId, userId, isRecording, timestamp } = data;
 
-    console.log(
+    this.logger.log(
       `User ${userId} ${isRecording ? 'started' : 'stopped'} recording in meeting ${meetingId}`,
     );
 
@@ -209,11 +203,10 @@ export class MeetingsGateway
     const { meetingId, speakerEmail, speakerName, text } = data;
 
     try {
-      console.log(
-        `Transcript update for meeting ${meetingId}: ${speakerEmail}: ${text.substring(0, 50)}...`,
+      this.logger.log(
+        `Transcript update for meeting ${meetingId}: ${speakerEmail}`,
       );
 
-      // Add to buffer - timeStart and timeEnd will be set by the service
       this.transcriptsService.addTranscript(
         meetingId,
         speakerEmail,
@@ -221,7 +214,6 @@ export class MeetingsGateway
         text,
       );
 
-      // Create broadcast entry with timestamp for real-time display
       const transcriptEntry = {
         speakerName: speakerName,
         speakerEmail: speakerEmail,
@@ -230,15 +222,91 @@ export class MeetingsGateway
         meetingId,
       };
 
-      // Broadcast to meeting room
       this.server
         .to(`meeting-${meetingId}`)
         .emit('new-transcript', transcriptEntry);
 
-      // Broadcast to all connected clients for dashboard updates
       this.server.emit('new-transcript', transcriptEntry);
     } catch (error) {
-      console.error('Error handling transcript update:', error);
+      this.logger.error('Error handling transcript update:', error);
+    }
+  }
+
+  @SubscribeMessage('ask-question')
+  async handleAskQuestion(
+    @MessageBody()
+    data: {
+      meetingId: number;
+      question: string;
+      userId: string;
+      speakerName: string;
+      speakerEmail: string;
+      tempId: string;
+    },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { meetingId, question, userId, speakerName, speakerEmail, tempId } =
+      data;
+
+    try {
+      this.logger.log(
+        `Question asked by ${userId} in meeting ${meetingId}: "${question}"`,
+      );
+
+      client.emit('question-status', {
+        meetingId: meetingId.toString(),
+        question,
+        userId,
+        speakerName,
+        speakerEmail,
+        status: 'asking',
+        timestamp: new Date().toISOString(),
+        tempId,
+      });
+
+      // Process question using RAG
+      const ragAnswer = await this.ragService.askQuestion({
+        meetingId: meetingId.toString(),
+        question,
+        userId,
+        speakerName,
+        speakerEmail,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Emit answer
+      client.emit('question-answered', {
+        tempId,
+        id: ragAnswer.id,
+        meetingId: meetingId.toString(),
+        question,
+        userId,
+        speakerName,
+        speakerEmail,
+        status: ragAnswer.status,
+        timestamp: new Date().toISOString(),
+        answer: ragAnswer.answer,
+        sources: ragAnswer.sources,
+      });
+
+      this.logger.log(
+        `Answer generated for question by ${speakerEmail} in meeting ${meetingId}`,
+      );
+    } catch (error) {
+      this.logger.error('Error handling question:', error);
+
+      // Emit error status
+      client.emit('question-error', {
+        meetingId: meetingId.toString(),
+        question,
+        userId,
+        speakerName,
+        speakerEmail,
+        status: 'error',
+        timestamp: new Date().toISOString(),
+        error: error.message || 'Failed to generate answer',
+        sources: [],
+      });
     }
   }
 
@@ -250,17 +318,14 @@ export class MeetingsGateway
       createdAt: string;
     },
   ) {
-    console.log(`Broadcasting summary-created for meeting ${meetingId}`);
+    this.logger.log(`Broadcasting summary-created for meeting ${meetingId}`);
 
     const summaryData = {
       meetingId,
       ...summary,
     };
 
-    // Broadcast to meeting room
     this.server.to(`meeting-${meetingId}`).emit('summary-created', summaryData);
-
-    // Also broadcast to all clients for dashboard updates
     this.server.emit('summary-created', summaryData);
   }
 
@@ -273,17 +338,15 @@ export class MeetingsGateway
       timeEnd: string;
     },
   ) {
-    console.log(
+    this.logger.log(
       `Broadcasting transcripts-flushed for meeting ${meetingId}, ${data.transcripts.length} segments`,
     );
 
-    // Broadcast to meeting room
     this.server.to(`meeting-${meetingId}`).emit('transcripts-flushed', {
       meetingId,
       ...data,
     });
 
-    // Also broadcast to all clients for dashboard updates
     this.server.emit('transcripts-flushed', {
       meetingId,
       ...data,
@@ -291,30 +354,26 @@ export class MeetingsGateway
   }
 
   async broadcastMeetingUpdate(meeting: any, eventType: string) {
-    console.log(
+    this.logger.log(
       `Broadcasting ${eventType} for meeting ${meeting.id} to ${meeting.participants.length} participants`,
     );
 
-    // Broadcast to meeting room
     this.server.to(`meeting-${meeting.id}`).emit(eventType, meeting);
-
-    // ALSO broadcast to all connected clients (for dashboard updates)
     this.server.emit(eventType, meeting);
 
-    // Send directly to each participant
     let sentCount = 0;
     meeting.participants.forEach((participantEmail: string) => {
       const socket = this.userSockets.get(participantEmail);
       if (socket && socket.connected) {
-        console.log(`Sending ${eventType} to participant: ${participantEmail}`);
+        this.logger.log(
+          `Sending ${eventType} to participant: ${participantEmail}`,
+        );
         socket.emit(eventType, meeting);
         sentCount++;
-      } else {
-        console.log(`Participant ${participantEmail} not connected`);
       }
     });
 
-    console.log(
+    this.logger.log(
       `Broadcasted ${eventType} to room, all clients, and ${sentCount}/${meeting.participants.length} participants directly`,
     );
   }
@@ -406,6 +465,6 @@ export class MeetingsGateway
   private cleanupMeeting(meetingId: string) {
     this.activeMeetings.delete(meetingId);
     this.recordingUsers.delete(meetingId);
-    console.log(`Cleaned up meeting data for ${meetingId}`);
+    this.logger.log(`Cleaned up meeting data for ${meetingId}`);
   }
 }

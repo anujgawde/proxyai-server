@@ -11,10 +11,18 @@ import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
 import { Summary } from 'src/entities/summary.entity';
 import { TranscriptsService } from 'src/transcripts/transcripts.service';
 import { GeminiService } from 'src/gemini/gemini.service';
+import { RAGService } from 'src/rag/rag.service';
+import { QAEntry } from 'src/entities/qa-entry.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Meeting, TranscriptEntry, Summary]),
+    TypeOrmModule.forFeature([
+      User,
+      Meeting,
+      TranscriptEntry,
+      Summary,
+      QAEntry,
+    ]),
   ],
   controllers: [MeetingsController],
   providers: [
@@ -24,6 +32,7 @@ import { GeminiService } from 'src/gemini/gemini.service';
     MeetingsGateway,
     TranscriptsService,
     GeminiService,
+    RAGService,
   ],
   exports: [MeetingsService],
 })

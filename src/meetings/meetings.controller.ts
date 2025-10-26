@@ -82,6 +82,15 @@ export class MeetingsController {
     return this.meetingsService.getMeetingSummaries(id, page, limit);
   }
 
+  @Get(':id/qa-history')
+  async getQAHistory(
+    @Param('id') id: string,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+  ) {
+    return this.meetingsService.getQAHistory(id, page, limit);
+  }
+
   // @Post(':id/transcript')
   // async addTranscriptEntry(
   //   @Param('id') id: string,

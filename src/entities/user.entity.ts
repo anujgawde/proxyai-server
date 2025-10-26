@@ -5,7 +5,9 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   Index,
+  OneToMany,
 } from 'typeorm';
+import { QAEntry } from './qa-entry.entity';
 
 export enum AuthProviderEnum {
   EMAIL = 'email',
@@ -49,4 +51,10 @@ export class User {
 
   @UpdateDateColumn({ name: 'updated_at', default: Date.now() })
   updatedAt: Date;
+
+  @OneToMany(() => QAEntry, (qaEntry) => qaEntry.meeting, {
+    cascade: true,
+    eager: false,
+  })
+  qaEntries: QAEntry[];
 }

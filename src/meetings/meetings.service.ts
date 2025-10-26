@@ -11,6 +11,7 @@ import { User } from 'src/entities/user.entity';
 import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
 import { TranscriptsService } from 'src/transcripts/transcripts.service';
 import { Summary } from 'src/entities/summary.entity';
+import { QAEntry } from 'src/entities/qa-entry.entity';
 
 @Injectable()
 export class MeetingsService {
@@ -25,6 +26,8 @@ export class MeetingsService {
     private transcriptsRepository: Repository<TranscriptEntry>,
     @InjectRepository(Summary)
     private summariesRepository: Repository<Summary>,
+    @InjectRepository(QAEntry)
+    private qaRepository: Repository<QAEntry>,
     private transcriptsService: TranscriptsService,
   ) {}
 
@@ -281,5 +284,35 @@ export class MeetingsService {
     });
 
     return summary;
+  }
+
+  async getQAHistory(meetingId: string, page: number = 1, limit: number = 10) {
+    const meeting = await this.meetingsRepository.findOne({
+      where: { id: meetingId },
+    });
+
+    if (!meeting) {
+      throw new NotFoundException('Meeting not found');
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [qaEntries, totalQA] = await this.qaRepository.findAndCount({
+      where: { meetingId },
+      order: { timestamp: 'ASC' }, // Chronological order (oldest first)
+      skip,
+      take: limit,
+    });
+
+    return {
+      data: qaEntries,
+      pagination: {
+        page,
+        limit,
+        totalQA,
+        totalPages: Math.ceil(totalQA / limit),
+        hasMore: skip + limit < totalQA,
+      },
+    };
   }
 }

@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
 import { TranscriptEntry } from './transcript-entry.entity';
 import { Summary } from './summary.entity';
+import { QAEntry } from './qa-entry.entity';
 
 @Entity('meetings')
 export class Meeting {
@@ -76,4 +77,10 @@ export class Meeting {
     eager: false,
   })
   summaries: Summary[];
+
+  @OneToMany(() => QAEntry, (qaEntry) => qaEntry.meeting, {
+    cascade: true,
+    eager: false,
+  })
+  qaEntries: QAEntry[];
 }

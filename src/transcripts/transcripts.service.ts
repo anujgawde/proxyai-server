@@ -1,4 +1,3 @@
-// src/meetings/transcripts.service.ts
 import {
   Injectable,
   Logger,
@@ -16,6 +15,7 @@ import { Meeting } from 'src/entities/meeting.entity';
 import { MeetingsGateway } from 'src/meetings/meetings.gateway';
 import { GeminiService } from 'src/gemini/gemini.service';
 import { Summary } from 'src/entities/summary.entity';
+import { RAGService } from 'src/rag/rag.service';
 
 interface BufferMetadata {
   transcripts: TranscriptData[];
@@ -38,9 +38,10 @@ export class TranscriptsService implements OnModuleDestroy {
     private summaryRepository: Repository<Summary>,
     @Inject(forwardRef(() => MeetingsGateway))
     private gateway: MeetingsGateway,
-
     @Inject(forwardRef(() => GeminiService))
     private geminiService: GeminiService,
+    @Inject(forwardRef(() => RAGService))
+    private ragService: RAGService,
   ) {}
 
   addTranscript(
@@ -130,11 +131,13 @@ export class TranscriptsService implements OnModuleDestroy {
       const timeStart = bufferData.timeStart;
       const timeEnd = new Date().toISOString();
 
+      // Reset buffer
       this.transcriptBuffer.set(meetingId, {
         transcripts: [],
         timeStart: timeEnd,
       });
 
+      // Save to database
       const transcriptEntry = this.transcriptRepository.create({
         transcripts: transcriptsToSave,
         meetingId: meetingId,
@@ -145,7 +148,7 @@ export class TranscriptsService implements OnModuleDestroy {
       const savedEntry = await this.transcriptRepository.save(transcriptEntry);
 
       this.logger.log(
-        `Flushed ${transcriptsToSave.length} transcript segments for meeting ${meetingId}. Time range: ${timeStart} - ${timeEnd}`,
+        `Flushed ${transcriptsToSave.length} transcript segments for meeting ${meetingId}`,
       );
 
       // Broadcast flushed transcripts
@@ -158,6 +161,20 @@ export class TranscriptsService implements OnModuleDestroy {
         });
       }
 
+      // Store in vector database for RAG
+      try {
+        await this.ragService.storeTranscripts(meetingId, transcriptsToSave);
+        this.logger.log(
+          `Stored transcripts in vector database for meeting ${meetingId}`,
+        );
+      } catch (ragError) {
+        this.logger.error(
+          `Error storing transcripts in vector database: ${ragError.message}`,
+        );
+        // Don't throw - continue with summary generation even if vector storage fails
+      }
+
+      // Generate summary
       this.generateAndSaveSummary(meetingId, transcriptsToSave);
     } catch (error) {
       this.logger.error(
@@ -172,8 +189,6 @@ export class TranscriptsService implements OnModuleDestroy {
     this.clearMeetingBuffer(meetingId);
   }
 
-  // src/transcripts/transcripts.service.ts - Only update the generateAndSaveSummary method
-
   private async generateAndSaveSummary(
     meetingId: string,
     transcripts: TranscriptData[],
@@ -181,11 +196,9 @@ export class TranscriptsService implements OnModuleDestroy {
     try {
       this.logger.log(`Generating summary for meeting ${meetingId}...`);
 
-      // Generate summary using Gemini
       const summaryContent =
         await this.geminiService.generateSummary(transcripts);
 
-      // Get meeting
       const meeting = await this.meetingsRepository.findOne({
         where: { id: meetingId },
       });
@@ -195,7 +208,6 @@ export class TranscriptsService implements OnModuleDestroy {
         return;
       }
 
-      // Save summary (simplified schema)
       const summary = this.summaryRepository.create({
         content: summaryContent,
         meetingId: meetingId,
@@ -208,7 +220,6 @@ export class TranscriptsService implements OnModuleDestroy {
         `Summary saved for meeting ${meetingId}: ${savedSummary.id}`,
       );
 
-      // Broadcast summary created
       if (this.gateway) {
         this.gateway.broadcastSummaryCreated(meetingId, {
           id: savedSummary.id,

@@ -10,6 +10,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { MeetingsModule } from './meetings/meetings.module';
 import { TranscriptEntry } from './entities/transcript-entry.entity';
 import { GeminiService } from './gemini/gemini.service';
+import { QAEntry } from './entities/qa-entry.entity';
+import { RAGModule } from './rag/rag.module';
 
 @Module({
   imports: [
@@ -44,8 +46,9 @@ import { GeminiService } from './gemini/gemini.service';
     AuthModule,
     UsersModule,
     MeetingsModule,
+    RAGModule,
   ],
   controllers: [AppController],
-  providers: [AppService, TranscriptEntry, GeminiService],
+  providers: [AppService, TranscriptEntry, QAEntry, GeminiService],
 })
 export class AppModule {}

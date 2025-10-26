@@ -1,4 +1,3 @@
-// src/gemini/gemini.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
 import { TranscriptData } from 'src/entities/transcript-entry.entity';
