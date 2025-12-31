@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Meeting } from './meeting.entity';
 
@@ -16,25 +17,31 @@ export interface TranscriptData {
 }
 
 @Entity('transcript_entries')
+// @Index(['meetingId'])
+// @Index(['createdAt'])
 export class TranscriptEntry {
   @PrimaryGeneratedColumn('increment')
   id: number;
 
-  @Column({ type: 'jsonb' })
+  @Column('jsonb')
   transcripts: TranscriptData[];
 
-  @ManyToOne(() => Meeting, (meeting) => meeting.transcript, {
+  @Column('int')
+  meetingId: number;
+
+  @Column('timestamp', { default: () => 'CURRENT_TIMESTAMP' })
+  timeStart: Date;
+
+  @Column('timestamp', { nullable: true })
+  timeEnd: Date;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  // Relations
+  @ManyToOne(() => Meeting, (meeting) => meeting.transcripts, {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'meeting_id' })
   meeting: Meeting;
-
-  @Column({ type: 'uuid', name: 'meeting_id' })
-  meetingId: string;
-
-  @CreateDateColumn({ name: 'time_start' })
-  timeStart: string;
-
-  @CreateDateColumn({ name: 'time_end' })
-  timeEnd: string;
 }

@@ -3,8 +3,10 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Meeting } from './meeting.entity';
 
@@ -13,18 +15,22 @@ export class Summary {
   @PrimaryGeneratedColumn('increment')
   id: number;
 
-  @Column({ type: 'text' })
+  @Column('text')
   content: string;
 
+  @Column('int')
+  meetingId: number;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+
+  // Relations
   @ManyToOne(() => Meeting, (meeting) => meeting.summaries, {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'meeting_id' })
   meeting: Meeting;
-
-  @Column({ type: 'uuid', name: 'meeting_id' })
-  meetingId: string;
-
-  @CreateDateColumn({ name: 'created_at' })
-  createdAt: string;
 }

@@ -65,10 +65,4 @@ export class UsersController {
   async getUserById(@Param('id') id: string) {
     return this.usersService.findById(id);
   }
-
-  @Patch(':id')
-  @UseGuards(FirebaseAuthGuard)
-  async updateUser(@Param('id') id: string, @Body() updateDto: UpdateUserDto) {
-    return this.usersService.updateById(id, updateDto);
-  }
 }

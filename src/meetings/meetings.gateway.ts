@@ -62,253 +62,253 @@ export class MeetingsGateway
     this.cleanupUserOnDisconnect(client.id);
   }
 
-  @SubscribeMessage('register-user')
-  handleRegisterUser(
-    @MessageBody() data: { email: string },
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { email } = data;
-    this.logger.log(`Registering user ${email} for global updates`);
+  // @SubscribeMessage('register-user')
+  // handleRegisterUser(
+  //   @MessageBody() data: { email: string },
+  //   @ConnectedSocket() client: Socket,
+  // ) {
+  //   const { email } = data;
+  //   this.logger.log(`Registering user ${email} for global updates`);
 
-    this.userSockets.set(email, client);
-    this.userSocketsByEmail.set(email, client.id);
+  //   this.userSockets.set(email, client);
+  //   this.userSocketsByEmail.set(email, client.id);
 
-    client.emit('user-registered', { email });
-  }
+  //   client.emit('user-registered', { email });
+  // }
 
-  @SubscribeMessage('join-meeting')
-  async handleJoinMeeting(
-    @MessageBody() data: { meetingId: string; userEmail: string },
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { meetingId, userEmail } = data;
+  // @SubscribeMessage('join-meeting')
+  // async handleJoinMeeting(
+  //   @MessageBody() data: { meetingId: string; userEmail: string },
+  //   @ConnectedSocket() client: Socket,
+  // ) {
+  //   const { meetingId, userEmail } = data;
 
-    this.logger.log(`User ${userEmail} joining meeting ${meetingId}`);
+  //   this.logger.log(`User ${userEmail} joining meeting ${meetingId}`);
 
-    this.userSockets.set(userEmail, client);
-    this.userSocketsByEmail.set(userEmail, client.id);
+  //   this.userSockets.set(userEmail, client);
+  //   this.userSocketsByEmail.set(userEmail, client.id);
 
-    await client.join(`meeting-${meetingId}`);
+  //   await client.join(`meeting-${meetingId}`);
 
-    if (!this.activeMeetings.has(meetingId)) {
-      this.activeMeetings.set(meetingId, new Set());
-    }
-    this.activeMeetings.get(meetingId)?.add(client.id);
+  //   if (!this.activeMeetings.has(meetingId)) {
+  //     this.activeMeetings.set(meetingId, new Set());
+  //   }
+  //   this.activeMeetings.get(meetingId)?.add(client.id);
 
-    if (!this.recordingUsers.has(meetingId)) {
-      this.recordingUsers.set(meetingId, new Map());
-    }
+  //   if (!this.recordingUsers.has(meetingId)) {
+  //     this.recordingUsers.set(meetingId, new Map());
+  //   }
 
-    const meeting = await this.meetingsService.getMeetingById(meetingId);
-    if (meeting) {
-      client.emit('meeting-joined', { meeting });
-    }
+  //   const meeting = await this.meetingsService.getMeetingById(meetingId);
+  //   if (meeting) {
+  //     client.emit('meeting-joined', { meeting });
+  //   }
 
-    const meetingRecordingUsers = this.recordingUsers.get(meetingId);
-    if (meetingRecordingUsers) {
-      const recordingUsersArray = Array.from(
-        meetingRecordingUsers.values(),
-      ).filter((user) => user.isRecording);
-      client.emit('recording-status-update', recordingUsersArray);
-    }
+  //   const meetingRecordingUsers = this.recordingUsers.get(meetingId);
+  //   if (meetingRecordingUsers) {
+  //     const recordingUsersArray = Array.from(
+  //       meetingRecordingUsers.values(),
+  //     ).filter((user) => user.isRecording);
+  //     client.emit('recording-status-update', recordingUsersArray);
+  //   }
 
-    client
-      .to(`meeting-${meetingId}`)
-      .emit('user-joined-meeting', { userEmail });
+  //   client
+  //     .to(`meeting-${meetingId}`)
+  //     .emit('user-joined-meeting', { userEmail });
 
-    this.logger.log(`User ${userEmail} joined meeting ${meetingId}`);
-  }
+  //   this.logger.log(`User ${userEmail} joined meeting ${meetingId}`);
+  // }
 
-  @SubscribeMessage('leave-meeting')
-  async handleLeaveMeeting(
-    @MessageBody() data: { meetingId: string; userEmail: string },
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { meetingId, userEmail } = data;
+  // @SubscribeMessage('leave-meeting')
+  // async handleLeaveMeeting(
+  //   @MessageBody() data: { meetingId: string; userEmail: string },
+  //   @ConnectedSocket() client: Socket,
+  // ) {
+  //   const { meetingId, userEmail } = data;
 
-    this.logger.log(`User ${userEmail} leaving meeting ${meetingId}`);
+  //   this.logger.log(`User ${userEmail} leaving meeting ${meetingId}`);
 
-    await client.leave(`meeting-${meetingId}`);
-    this.cleanupUserFromMeeting(meetingId, userEmail, client.id);
+  //   await client.leave(`meeting-${meetingId}`);
+  //   this.cleanupUserFromMeeting(meetingId, userEmail, client.id);
 
-    client.to(`meeting-${meetingId}`).emit('user-left-meeting', { userEmail });
-  }
+  //   client.to(`meeting-${meetingId}`).emit('user-left-meeting', { userEmail });
+  // }
 
-  @SubscribeMessage('update-recording-status')
-  handleUpdateRecordingStatus(
-    @MessageBody()
-    data: {
-      meetingId: string;
-      userId: string;
-      isRecording: boolean;
-      timestamp: string;
-    },
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { meetingId, userId, isRecording, timestamp } = data;
+  // @SubscribeMessage('update-recording-status')
+  // handleUpdateRecordingStatus(
+  //   @MessageBody()
+  //   data: {
+  //     meetingId: string;
+  //     userId: string;
+  //     isRecording: boolean;
+  //     timestamp: string;
+  //   },
+  //   @ConnectedSocket() client: Socket,
+  // ) {
+  //   const { meetingId, userId, isRecording, timestamp } = data;
 
-    this.logger.log(
-      `User ${userId} ${isRecording ? 'started' : 'stopped'} recording in meeting ${meetingId}`,
-    );
+  //   this.logger.log(
+  //     `User ${userId} ${isRecording ? 'started' : 'stopped'} recording in meeting ${meetingId}`,
+  //   );
 
-    if (!this.recordingUsers.has(meetingId)) {
-      this.recordingUsers.set(meetingId, new Map());
-    }
+  //   if (!this.recordingUsers.has(meetingId)) {
+  //     this.recordingUsers.set(meetingId, new Map());
+  //   }
 
-    const meetingRecordingUsers = this.recordingUsers.get(meetingId);
+  //   const meetingRecordingUsers = this.recordingUsers.get(meetingId);
 
-    if (meetingRecordingUsers) {
-      if (isRecording) {
-        meetingRecordingUsers.set(userId, {
-          userId,
-          isRecording: true,
-          lastActivity: timestamp,
-          socketId: client.id,
-        });
-      } else {
-        const existingUser = meetingRecordingUsers.get(userId);
-        if (existingUser) {
-          meetingRecordingUsers.set(userId, {
-            ...existingUser,
-            isRecording: false,
-          });
-        }
-      }
+  //   if (meetingRecordingUsers) {
+  //     if (isRecording) {
+  //       meetingRecordingUsers.set(userId, {
+  //         userId,
+  //         isRecording: true,
+  //         lastActivity: timestamp,
+  //         socketId: client.id,
+  //       });
+  //     } else {
+  //       const existingUser = meetingRecordingUsers.get(userId);
+  //       if (existingUser) {
+  //         meetingRecordingUsers.set(userId, {
+  //           ...existingUser,
+  //           isRecording: false,
+  //         });
+  //       }
+  //     }
 
-      const eventName = isRecording
-        ? 'user-started-recording'
-        : 'user-stopped-recording';
-      client.to(`meeting-${meetingId}`).emit(eventName, userId);
+  //     const eventName = isRecording
+  //       ? 'user-started-recording'
+  //       : 'user-stopped-recording';
+  //     client.to(`meeting-${meetingId}`).emit(eventName, userId);
 
-      const recordingUsersArray = Array.from(
-        meetingRecordingUsers.values(),
-      ).filter((user) => user.isRecording);
+  //     const recordingUsersArray = Array.from(
+  //       meetingRecordingUsers.values(),
+  //     ).filter((user) => user.isRecording);
 
-      this.server
-        .to(`meeting-${meetingId}`)
-        .emit('recording-status-update', recordingUsersArray);
-    }
-  }
+  //     this.server
+  //       .to(`meeting-${meetingId}`)
+  //       .emit('recording-status-update', recordingUsersArray);
+  //   }
+  // }
 
-  @SubscribeMessage('transcript-update')
-  async handleTranscriptUpdate(
-    @MessageBody()
-    data: {
-      meetingId: string;
-      speakerEmail: string;
-      speakerName: string;
-      text: string;
-    },
-  ) {
-    const { meetingId, speakerEmail, speakerName, text } = data;
+  // @SubscribeMessage('transcript-update')
+  // async handleTranscriptUpdate(
+  //   @MessageBody()
+  //   data: {
+  //     meetingId: string;
+  //     speakerEmail: string;
+  //     speakerName: string;
+  //     text: string;
+  //   },
+  // ) {
+  //   const { meetingId, speakerEmail, speakerName, text } = data;
 
-    try {
-      this.logger.log(
-        `Transcript update for meeting ${meetingId}: ${speakerEmail}`,
-      );
+  //   try {
+  //     this.logger.log(
+  //       `Transcript update for meeting ${meetingId}: ${speakerEmail}`,
+  //     );
 
-      this.transcriptsService.addTranscript(
-        meetingId,
-        speakerEmail,
-        speakerName,
-        text,
-      );
+  //     this.transcriptsService.addTranscript(
+  //       meetingId,
+  //       speakerEmail,
+  //       speakerName,
+  //       text,
+  //     );
 
-      const transcriptEntry = {
-        speakerName: speakerName,
-        speakerEmail: speakerEmail,
-        text: text.trim(),
-        timestamp: new Date().toISOString(),
-        meetingId,
-      };
+  //     const transcriptEntry = {
+  //       speakerName: speakerName,
+  //       speakerEmail: speakerEmail,
+  //       text: text.trim(),
+  //       timestamp: new Date().toISOString(),
+  //       meetingId,
+  //     };
 
-      this.server
-        .to(`meeting-${meetingId}`)
-        .emit('new-transcript', transcriptEntry);
+  //     this.server
+  //       .to(`meeting-${meetingId}`)
+  //       .emit('new-transcript', transcriptEntry);
 
-      this.server.emit('new-transcript', transcriptEntry);
-    } catch (error) {
-      this.logger.error('Error handling transcript update:', error);
-    }
-  }
+  //     this.server.emit('new-transcript', transcriptEntry);
+  //   } catch (error) {
+  //     this.logger.error('Error handling transcript update:', error);
+  //   }
+  // }
 
-  @SubscribeMessage('ask-question')
-  async handleAskQuestion(
-    @MessageBody()
-    data: {
-      meetingId: number;
-      question: string;
-      userId: string;
-      speakerName: string;
-      speakerEmail: string;
-      tempId: string;
-    },
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { meetingId, question, userId, speakerName, speakerEmail, tempId } =
-      data;
+  // @SubscribeMessage('ask-question')
+  // async handleAskQuestion(
+  //   @MessageBody()
+  //   data: {
+  //     meetingId: number;
+  //     question: string;
+  //     userId: string;
+  //     speakerName: string;
+  //     speakerEmail: string;
+  //     tempId: string;
+  //   },
+  //   @ConnectedSocket() client: Socket,
+  // ) {
+  //   const { meetingId, question, userId, speakerName, speakerEmail, tempId } =
+  //     data;
 
-    try {
-      this.logger.log(
-        `Question asked by ${userId} in meeting ${meetingId}: "${question}"`,
-      );
+  //   try {
+  //     this.logger.log(
+  //       `Question asked by ${userId} in meeting ${meetingId}: "${question}"`,
+  //     );
 
-      client.emit('question-status', {
-        meetingId: meetingId.toString(),
-        question,
-        userId,
-        speakerName,
-        speakerEmail,
-        status: 'asking',
-        timestamp: new Date().toISOString(),
-        tempId,
-      });
+  //     client.emit('question-status', {
+  //       meetingId: meetingId.toString(),
+  //       question,
+  //       userId,
+  //       speakerName,
+  //       speakerEmail,
+  //       status: 'asking',
+  //       timestamp: new Date().toISOString(),
+  //       tempId,
+  //     });
 
-      // Process question using RAG
-      const ragAnswer = await this.ragService.askQuestion({
-        meetingId: meetingId.toString(),
-        question,
-        userId,
-        speakerName,
-        speakerEmail,
-        timestamp: new Date().toISOString(),
-      });
+  //     // Process question using RAG
+  //     const ragAnswer = await this.ragService.askQuestion({
+  //       meetingId: meetingId.toString(),
+  //       question,
+  //       userId,
+  //       speakerName,
+  //       speakerEmail,
+  //       timestamp: new Date().toISOString(),
+  //     });
 
-      // Emit answer
-      client.emit('question-answered', {
-        tempId,
-        id: ragAnswer.id,
-        meetingId: meetingId.toString(),
-        question,
-        userId,
-        speakerName,
-        speakerEmail,
-        status: ragAnswer.status,
-        timestamp: new Date().toISOString(),
-        answer: ragAnswer.answer,
-        sources: ragAnswer.sources,
-      });
+  //     // Emit answer
+  //     client.emit('question-answered', {
+  //       tempId,
+  //       id: ragAnswer.id,
+  //       meetingId: meetingId.toString(),
+  //       question,
+  //       userId,
+  //       speakerName,
+  //       speakerEmail,
+  //       status: ragAnswer.status,
+  //       timestamp: new Date().toISOString(),
+  //       answer: ragAnswer.answer,
+  //       sources: ragAnswer.sources,
+  //     });
 
-      this.logger.log(
-        `Answer generated for question by ${speakerEmail} in meeting ${meetingId}`,
-      );
-    } catch (error) {
-      this.logger.error('Error handling question:', error);
+  //     this.logger.log(
+  //       `Answer generated for question by ${speakerEmail} in meeting ${meetingId}`,
+  //     );
+  //   } catch (error) {
+  //     this.logger.error('Error handling question:', error);
 
-      // Emit error status
-      client.emit('question-error', {
-        meetingId: meetingId.toString(),
-        question,
-        userId,
-        speakerName,
-        speakerEmail,
-        status: 'error',
-        timestamp: new Date().toISOString(),
-        error: error.message || 'Failed to generate answer',
-        sources: [],
-      });
-    }
-  }
+  //     // Emit error status
+  //     client.emit('question-error', {
+  //       meetingId: meetingId.toString(),
+  //       question,
+  //       userId,
+  //       speakerName,
+  //       speakerEmail,
+  //       status: 'error',
+  //       timestamp: new Date().toISOString(),
+  //       error: error.message || 'Failed to generate answer',
+  //       sources: [],
+  //     });
+  //   }
+  // }
 
   broadcastSummaryCreated(
     meetingId: string,

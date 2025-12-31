@@ -1,86 +1,116 @@
-import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  OneToMany,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { TranscriptEntry } from './transcript-entry.entity';
 import { Summary } from './summary.entity';
 import { QAEntry } from './qa-entry.entity';
+import { User } from './user.entity';
+
+export enum MeetingProvider {
+  ZOOM = 'zoom',
+  GOOGLE_MEET = 'google_meet',
+  TEAMS = 'teams',
+}
+
+export enum MeetingStatus {
+  SCHEDULED = 'scheduled',
+  LIVE = 'live',
+  PAST = 'past',
+  NO_SHOW = 'no_show',
+  CANCELLED = 'cancelled',
+}
 
 @Entity('meetings')
 export class Meeting {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+  @PrimaryGeneratedColumn('increment', { name: 'id' })
+  id: number;
 
-  @Column({ type: 'varchar', length: 255, nullable: false, name: 'title' })
+  @Column('varchar', { length: 512, name: 'title' })
   title: string;
 
-  @Column({ type: 'text', array: true, nullable: false, name: 'participants' })
-  participants: string[];
+  @Column('text', { nullable: true, name: 'description' })
+  description: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: false, name: 'created_by' })
-  createdBy: string;
+  @Column('timestamp', { name: 'start_time' })
+  startTime: Date;
 
-  @Column({ type: 'date', nullable: false, name: 'scheduled_on' })
-  scheduledOn: Date;
+  @Column('timestamp', { nullable: true, name: 'end_time' })
+  endTime: Date;
 
-  @Column({ type: 'timestamptz', nullable: false, name: 'scheduled_start' })
-  scheduledStart: Date;
+  @Column('varchar', { length: 100, nullable: true, name: 'timezone' })
+  timezone: string;
 
-  @Column({ type: 'timestamptz', nullable: false, name: 'scheduled_end' })
-  scheduledEnd: Date;
-
-  @Column({ type: 'timestamptz', nullable: true, name: 'started_at' })
-  startedAt: Date | null;
-
-  @Column({ type: 'timestamptz', nullable: true, name: 'ended_at' })
-  endedAt: Date | null;
+  @Column('int', { nullable: true, name: 'duration' })
+  duration: number;
 
   @Column({
-    type: 'varchar',
-    length: 20,
-    nullable: false,
+    type: 'enum',
+    enum: MeetingStatus,
     name: 'status',
-    default: 'scheduled',
   })
-  status: 'scheduled' | 'ongoing' | 'ended';
+  status: MeetingStatus;
+
+  @Column('varchar', { length: 255, name: 'meeting_url' })
+  meetingUrl: string;
 
   @Column({
-    type: 'varchar',
-    length: 255,
-    nullable: false,
-    name: 'meeting_room_name',
+    type: 'enum',
+    enum: MeetingProvider,
+    name: 'provider',
   })
-  meetingRoomName: string;
+  provider: MeetingProvider;
 
-  @Column({
-    type: 'timestamptz',
-    nullable: false,
-    name: 'created_at',
-    default: () => 'CURRENT_TIMESTAMP',
-  })
+  @Column('varchar', { length: 255, nullable: true, name: 'organizer_id' })
+  organizerId: string;
+
+  @Column('int', { default: 0, nullable: true, name: 'expected_participants' })
+  expectedParticipants: number;
+
+  @Column('int', { default: 0, nullable: true, name: 'present_participants' })
+  presentParticipants: number;
+
+  @Column('jsonb', { name: 'provider_metadata' })
+  providerMetadata: Record<string, any>;
+
+  @Column('boolean', { default: false, name: 'is_deleted' })
+  isDeleted: boolean;
+
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @Column({
-    type: 'timestamptz',
-    nullable: false,
-    name: 'updated_at',
-    default: () => 'CURRENT_TIMESTAMP',
-    onUpdate: 'CURRENT_TIMESTAMP',
-  })
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
+  // Relations
   @OneToMany(() => TranscriptEntry, (transcript) => transcript.meeting, {
     cascade: true,
-    eager: false,
+    onDelete: 'CASCADE',
   })
-  transcript: TranscriptEntry[];
+  transcripts: TranscriptEntry[];
 
   @OneToMany(() => Summary, (summary) => summary.meeting, {
     cascade: true,
-    eager: false,
+    onDelete: 'CASCADE',
   })
   summaries: Summary[];
 
-  @OneToMany(() => QAEntry, (qaEntry) => qaEntry.meeting, {
+  @OneToMany(() => QAEntry, (qa) => qa.meeting, {
     cascade: true,
-    eager: false,
+    onDelete: 'CASCADE',
   })
   qaEntries: QAEntry[];
+
+  @ManyToOne(() => User, (user) => user.firebaseUid, {
+    cascade: true,
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'user_id', referencedColumnName: 'firebaseUid' })
+  userId: User;
 }

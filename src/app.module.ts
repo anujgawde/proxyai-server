@@ -12,6 +12,7 @@ import { TranscriptEntry } from './entities/transcript-entry.entity';
 import { GeminiService } from './gemini/gemini.service';
 import { QAEntry } from './entities/qa-entry.entity';
 import { RAGModule } from './rag/rag.module';
+import { ProvidersModule } from './providers/providers.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { RAGModule } from './rag/rag.module';
     UsersModule,
     MeetingsModule,
     RAGModule,
+    ProvidersModule,
   ],
   controllers: [AppController],
   providers: [AppService, TranscriptEntry, QAEntry, GeminiService],

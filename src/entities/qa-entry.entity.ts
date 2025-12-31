@@ -2,50 +2,51 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
+  CreateDateColumn,
   ManyToOne,
   JoinColumn,
-  CreateDateColumn,
+  Index,
 } from 'typeorm';
-import { User } from 'src/entities/user.entity';
-import { Meeting } from 'src/entities/meeting.entity';
+import { User } from './user.entity';
+import { Meeting } from './meeting.entity';
+
+export enum QAStatus {
+  ASKING = 'asking',
+  ANSWERED = 'answered',
+  ERROR = 'error',
+}
 
 @Entity('qa_entries')
 export class QAEntry {
   @PrimaryGeneratedColumn('increment')
   id: number;
 
-  @Column({ name: 'user_id' })
+  @Column('varchar', { length: 255 })
   userId: string;
 
-  @Column({ name: 'meeting_id', type: 'uuid' })
-  meetingId: string;
+  @Column('int')
+  meetingId: number;
 
-  @Column({ name: 'speaker_name' })
-  speakerName: string;
-
-  @Column({ name: 'speaker_email' })
-  speakerEmail: string;
-
-  @Column({ type: 'text' })
+  @Column('text')
   question: string;
 
-  @Column({ type: 'text' })
+  @Column('text')
   answer: string;
 
   @CreateDateColumn()
-  timestamp: string;
+  timestamp: Date;
 
   @Column({
     type: 'enum',
-    enum: ['asking', 'answered', 'error'],
+    enum: QAStatus,
     nullable: true,
   })
-  status?: 'asking' | 'answered' | 'error';
+  status?: QAStatus;
 
-  @Column({ type: 'text', array: true, nullable: true })
+  @Column('text', { array: true, nullable: true })
   sources?: string[];
 
-  // ---- RELATIONS ----
+  // Relations
   @ManyToOne(() => User, (user) => user.qaEntries, {
     onDelete: 'CASCADE',
   })
