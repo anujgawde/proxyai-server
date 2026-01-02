@@ -6,7 +6,6 @@ import { FirebaseService } from 'src/auth/firebase.service';
 import { User } from 'src/entities/user.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Meeting } from 'src/entities/meeting.entity';
-import { MeetingsGateway } from './meetings.gateway';
 import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
 import { Summary } from 'src/entities/summary.entity';
 import { TranscriptsService } from 'src/transcripts/transcripts.service';
@@ -17,6 +16,7 @@ import { MeetingsScheduler } from './meetings.scheduler';
 import { ProvidersZoomService } from 'src/providers/providers-zoom.service';
 import { ProvidersGoogleService } from 'src/providers/providers-google.service';
 import { Provider } from 'src/entities/providers.entity';
+import { BotService } from 'src/bot/bot.service';
 
 @Module({
   imports: [
@@ -34,13 +34,13 @@ import { Provider } from 'src/entities/providers.entity';
     MeetingsService,
     FirebaseService,
     FirebaseAuthGuard,
-    MeetingsGateway,
     TranscriptsService,
     GeminiService,
     RAGService,
     MeetingsScheduler,
     ProvidersZoomService,
     ProvidersGoogleService,
+    BotService,
   ],
   exports: [MeetingsService],
 })

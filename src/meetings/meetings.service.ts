@@ -12,11 +12,10 @@ import { TranscriptsService } from 'src/transcripts/transcripts.service';
 import { Summary } from 'src/entities/summary.entity';
 import { QAEntry } from 'src/entities/qa-entry.entity';
 import axios from 'axios';
+import { BotService } from 'src/bot/bot.service';
 
 @Injectable()
 export class MeetingsService {
-  private gateway: any = null;
-
   constructor(
     @InjectRepository(Meeting)
     private meetingsRepository: Repository<Meeting>,
@@ -29,11 +28,8 @@ export class MeetingsService {
     @InjectRepository(QAEntry)
     private qaRepository: Repository<QAEntry>,
     private transcriptsService: TranscriptsService,
+    private botService: BotService,
   ) {}
-
-  setGateway(gateway: any) {
-    this.gateway = gateway;
-  }
 
   async getMeetingsByStatus(
     firebaseUid: string,
@@ -252,6 +248,10 @@ export class MeetingsService {
 
         await this.meetingsRepository.save(createdMeeting);
         synced++;
+        this.botService.scheduleBotForMeeting({
+          meetingUrl: meetLink,
+          startTime: startTime,
+        });
       } catch (err) {
         console.error(`Error processing Google event ${event.id}:`, err);
         continue;

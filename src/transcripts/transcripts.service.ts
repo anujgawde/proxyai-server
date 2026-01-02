@@ -12,7 +12,6 @@ import {
   TranscriptData,
 } from 'src/entities/transcript-entry.entity';
 import { Meeting } from 'src/entities/meeting.entity';
-import { MeetingsGateway } from 'src/meetings/meetings.gateway';
 import { GeminiService } from 'src/gemini/gemini.service';
 import { Summary } from 'src/entities/summary.entity';
 import { RAGService } from 'src/rag/rag.service';
@@ -36,8 +35,6 @@ export class TranscriptsService implements OnModuleDestroy {
     private meetingsRepository: Repository<Meeting>,
     @InjectRepository(Summary)
     private summaryRepository: Repository<Summary>,
-    @Inject(forwardRef(() => MeetingsGateway))
-    private gateway: MeetingsGateway,
     @Inject(forwardRef(() => GeminiService))
     private geminiService: GeminiService,
     @Inject(forwardRef(() => RAGService))
