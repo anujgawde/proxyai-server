@@ -6,11 +6,13 @@ import { Provider } from '../entities/providers.entity';
 import { FirebaseService } from 'src/auth/firebase.service';
 import { FirebaseAuthGuard } from 'src/auth/guards/firebae-auth.guard';
 import { ProvidersGoogleService } from './providers-google.service';
+import { ProvidersService } from './providers.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Provider])],
   controllers: [ProvidersController],
   providers: [
+    ProvidersService,
     ProvidersZoomService,
     ProvidersGoogleService,
     FirebaseService,

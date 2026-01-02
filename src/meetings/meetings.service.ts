@@ -1,19 +1,17 @@
-import {
-  Injectable,
-  InternalServerErrorException,
-  NotFoundException,
-} from '@nestjs/common';
-import { CreateMeetingDto } from './dto/create-meeting.dto';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Meeting } from 'src/entities/meeting.entity';
+import {
+  Meeting,
+  MeetingProvider,
+  MeetingStatus,
+} from 'src/entities/meeting.entity';
 import { User } from 'src/entities/user.entity';
 import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
 import { TranscriptsService } from 'src/transcripts/transcripts.service';
 import { Summary } from 'src/entities/summary.entity';
 import { QAEntry } from 'src/entities/qa-entry.entity';
 import axios from 'axios';
-import { MeetingProvider, MeetingStatus } from 'types/meetings';
 
 @Injectable()
 export class MeetingsService {
@@ -77,7 +75,7 @@ export class MeetingsService {
     firebaseUid: string,
     tokens: {
       zoomAccessToken?: string;
-      gmeetAccessToken?: string;
+      googleMeetAccessToken?: string;
       teamsAccessToken?: string;
     },
   ) {
@@ -90,10 +88,10 @@ export class MeetingsService {
       );
     }
 
-    if (tokens.gmeetAccessToken) {
+    if (tokens.googleMeetAccessToken) {
       results.googleMeet = await this.syncGoogleMeetMeetings(
         firebaseUid,
-        tokens.gmeetAccessToken,
+        tokens.googleMeetAccessToken,
       );
     }
 
@@ -105,25 +103,6 @@ export class MeetingsService {
     }
 
     return results;
-  }
-
-  async reconcileMeetingStatus() {
-    const now = new Date();
-    const result = await this.meetingsRepository
-      .createQueryBuilder()
-      .update(Meeting)
-      .set({
-        status: MeetingStatus.NO_SHOW,
-        updatedAt: () => 'now()',
-      })
-      .where('status = :status', { status: MeetingStatus.SCHEDULED })
-      .andWhere("start_time + (duration || ' minutes')::interval < :now", {
-        now,
-      })
-      .andWhere('is_deleted = false')
-      .execute();
-
-    console.log(`Marked ${result.affected ?? 0} meetings as NO_SHOW`);
   }
 
   // Private Methods:
@@ -138,7 +117,7 @@ export class MeetingsService {
         'https://api.zoom.us/v2/users/me/upcoming_meetings',
         {
           headers: { Authorization: `Bearer ${accessToken}` },
-          params: { page_size: 100 }, // max allowed
+          params: { page_size: 100 },
         },
       );
 
@@ -226,9 +205,7 @@ export class MeetingsService {
 
     for (const event of events) {
       try {
-        /**
-         * Google Meet link can appear in multiple places
-         */
+        // Meet link can appear in multiple places
         const meetLink =
           event.hangoutLink ||
           event.conferenceData?.entryPoints?.find(
@@ -261,7 +238,6 @@ export class MeetingsService {
           title: event.summary ?? 'Google Meet',
           description: event.description ?? null,
           startTime,
-          // endTime,
           timezone: event.start?.timeZone ?? null,
           duration:
             endTime && startTime

@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
 import * as fs from 'fs';
 import * as path from 'path';
-import { TranscriptData } from 'types/transcripts';
+import { TranscriptData } from 'src/entities/transcript-entry.entity';
 
 @Injectable()
 export class GeminiService {

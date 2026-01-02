@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import axios from 'axios';
-import { Provider } from 'src/entities/providers.entity';
+import { Provider, ProviderOptions } from 'src/entities/providers.entity';
 import { Repository } from 'typeorm';
 
 @Injectable()
@@ -14,7 +14,6 @@ export class ProvidersGoogleService {
   ) {}
 
   async handleOAuth(code: string, userId: string) {
-    // 🔍 Log the received authorization code
     this.logger.log(
       `Google OAuth callback received. userId=${userId}, code=${code}`,
     );
@@ -33,7 +32,6 @@ export class ProvidersGoogleService {
           headers: { 'Content-Type': 'application/json' },
         },
       );
-      console.log(tokenRes.data);
       const { access_token, refresh_token } = tokenRes.data;
 
       if (!refresh_token) {
@@ -47,9 +45,10 @@ export class ProvidersGoogleService {
       await this.providersRepository.upsert(
         {
           userId,
-          providerName: 'google_meet',
+          providerName: ProviderOptions.google_meet,
           refreshToken: refresh_token,
           lastSyncedAt: null,
+          isConnected: true,
         },
         ['userId', 'providerName'],
       );
@@ -90,7 +89,7 @@ export class ProvidersGoogleService {
         },
         { headers: { 'Content-Type': 'application/json' } },
       );
-
+      console.log(res.data, 'logging google refresh token');
       return res.data;
     } catch (err: any) {
       this.logger.error('Failed to refresh Google access token');

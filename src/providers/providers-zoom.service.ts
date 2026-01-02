@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Provider } from '../entities/providers.entity';
+import { Provider, ProviderOptions } from '../entities/providers.entity';
 
 @Injectable()
 export class ProvidersZoomService {
@@ -46,7 +46,7 @@ export class ProvidersZoomService {
     await this.providersRepo.upsert(
       {
         userId: userId,
-        providerName: 'zoom',
+        providerName: ProviderOptions.zoom,
         refreshToken: refresh_token,
       },
       ['user_id', 'provider_name'],

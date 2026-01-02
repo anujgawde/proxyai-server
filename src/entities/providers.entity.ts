@@ -7,6 +7,11 @@ import {
   Unique,
 } from 'typeorm';
 
+export enum ProviderOptions {
+  'zoom' = 'zoom',
+  'google_meet' = 'google_meet',
+  'teams' = 'teams',
+}
 @Entity('providers')
 @Unique(['userId', 'providerName'])
 export class Provider {
@@ -17,15 +22,18 @@ export class Provider {
   userId: string;
 
   @Column({ name: 'provider_name' })
-  providerName: 'zoom' | 'google_meet' | 'teams';
+  providerName: ProviderOptions;
 
   @Column({ type: 'text', name: 'refresh_token' })
   refreshToken: string;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @Column({ type: 'boolean', name: 'is_connected' })
+  isConnected: boolean;
+
+  @CreateDateColumn({ type: 'timestamp', name: 'created_at' })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({ type: 'timestamp', name: 'updated_at' })
   updatedAt: Date;
 
   @Column({ type: 'timestamp', nullable: true, name: 'last_synced_at' })

@@ -13,9 +13,11 @@ import { GeminiService } from './gemini/gemini.service';
 import { QAEntry } from './entities/qa-entry.entity';
 import { RAGModule } from './rag/rag.module';
 import { ProvidersModule } from './providers/providers.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
+    // ScheduleModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
       load: [databaseConfig, firebaseConfig],

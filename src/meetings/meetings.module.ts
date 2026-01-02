@@ -13,6 +13,10 @@ import { TranscriptsService } from 'src/transcripts/transcripts.service';
 import { GeminiService } from 'src/gemini/gemini.service';
 import { RAGService } from 'src/rag/rag.service';
 import { QAEntry } from 'src/entities/qa-entry.entity';
+import { MeetingsScheduler } from './meetings.scheduler';
+import { ProvidersZoomService } from 'src/providers/providers-zoom.service';
+import { ProvidersGoogleService } from 'src/providers/providers-google.service';
+import { Provider } from 'src/entities/providers.entity';
 
 @Module({
   imports: [
@@ -22,6 +26,7 @@ import { QAEntry } from 'src/entities/qa-entry.entity';
       TranscriptEntry,
       Summary,
       QAEntry,
+      Provider,
     ]),
   ],
   controllers: [MeetingsController],
@@ -33,6 +38,9 @@ import { QAEntry } from 'src/entities/qa-entry.entity';
     TranscriptsService,
     GeminiService,
     RAGService,
+    MeetingsScheduler,
+    ProvidersZoomService,
+    ProvidersGoogleService,
   ],
   exports: [MeetingsService],
 })

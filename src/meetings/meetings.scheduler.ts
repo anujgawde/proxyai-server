@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, Interval } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { MeetingsService } from './meetings.service';
-import { Provider } from 'src/entities/providers.entity';
+import { Provider, ProviderOptions } from 'src/entities/providers.entity';
 import { ProvidersZoomService } from 'src/providers/providers-zoom.service';
 import { ProvidersGoogleService } from 'src/providers/providers-google.service';
 
@@ -13,41 +13,46 @@ export class MeetingsScheduler {
 
   constructor(
     private readonly meetingsService: MeetingsService,
-    private readonly providersZoomService: ProvidersZoomService,
     private readonly providersGoogleService: ProvidersGoogleService,
 
     @InjectRepository(Provider)
     private readonly providersRepository: Repository<Provider>,
   ) {}
 
-  /**
-   * Runs every day at 1:00 AM
-   */
-  @Cron('40 1 * * *')
+  // Cron Job that runs every night at 1 AM. Enable the appmodule import to make this active.
+  @Cron('0 1 * * *')
   async syncMeetingsCron() {
     this.logger.log('Starting syncMeetingsCron');
 
     const BATCH_SIZE = 50;
-    let lastId = 0;
+    let lastId: number | null = null;
 
     while (true) {
-      const providers = await this.providersRepository
+      const query = this.providersRepository
         .createQueryBuilder('provider')
-        .where('provider.id > :lastId', { lastId })
         .orderBy('provider.id', 'ASC')
-        .limit(BATCH_SIZE)
-        .getMany();
+        .limit(BATCH_SIZE);
 
-      if (!providers.length) break;
+      if (lastId !== null) {
+        query
+          .where('provider.id > :lastId', { lastId })
+          .andWhere('is_connected = true');
+      }
+
+      const providers = await query.getMany();
+
+      if (providers.length === 0) {
+        break;
+      }
 
       lastId = providers[providers.length - 1].id;
 
-      // Group tokens by user
+      // User -> User approved meeting providers
       const userTokenMap = new Map<
         string,
         {
           zoomAccessToken?: string;
-          gmeetAccessToken?: string;
+          googleMeetAccessToken?: string;
           teamsAccessToken?: string;
         }
       >();
@@ -55,66 +60,56 @@ export class MeetingsScheduler {
       await Promise.allSettled(
         providers.map(async (provider) => {
           try {
-            if (provider.providerName === 'zoom') {
-              const { accessToken, refreshToken } =
-                await this.providersZoomService.refreshZoomTokens(
-                  provider.refreshToken,
-                );
+            // if (provider.providerName === 'zoom') {
+            //   const { accessToken, refreshToken } =
+            //     await this.providersZoomService.refreshZoomTokens(
+            //       provider.refreshToken,
+            //     );
 
-              // Rotate refresh token + mark synced
-              await this.providersRepository.update(
-                { id: provider.id },
-                {
-                  refreshToken,
-                  lastSyncedAt: new Date(),
-                },
-              );
+            //   if (!userTokenMap.has(provider.userId)) {
+            //     userTokenMap.set(provider.userId, {});
+            //   }
 
-              if (!userTokenMap.has(provider.userId)) {
-                userTokenMap.set(provider.userId, {});
-              }
-
-              userTokenMap.get(provider.userId)!.zoomAccessToken = accessToken;
-            }
+            //   userTokenMap.get(provider.userId)!.zoomAccessToken = accessToken;
+            // }
 
             if (provider.providerName === 'google_meet') {
-              const { accessToken, refreshToken } =
+              const { access_token } =
                 await this.providersGoogleService.refreshGoogleToken(
                   provider.refreshToken,
                 );
 
-              // Rotate refresh token + mark synced
-              await this.providersRepository.update(
-                { id: provider.id },
-                {
-                  refreshToken,
-                  lastSyncedAt: new Date(),
-                },
-              );
-
               if (!userTokenMap.has(provider.userId)) {
                 userTokenMap.set(provider.userId, {});
               }
 
-              userTokenMap.get(provider.userId)!.zoomAccessToken = accessToken;
+              userTokenMap.get(provider.userId)!.googleMeetAccessToken =
+                access_token;
             }
-
-            // TODO: Teams
           } catch (err) {
             this.logger.error(
-              `OAuth refresh failed for provider=${provider.providerName} user=${provider.userId}`,
-              err,
+              `OAuth refresh failed | provider=${provider.providerName} | user=${provider.userId}`,
+              err instanceof Error ? err.stack : String(err),
             );
           }
         }),
       );
 
-      // Sync meetings per user
+      // Sync meetinngs for all providers for each user
       for (const [firebaseUid, tokens] of userTokenMap.entries()) {
+        if (!tokens.zoomAccessToken && !tokens.googleMeetAccessToken) {
+          continue;
+        }
+
         try {
+          this.logger.log(`Syncing meetings for user=${firebaseUid}`);
           await this.meetingsService.syncMeetings(firebaseUid, tokens);
+          await this.updateProviderLastSyncedAt(firebaseUid, tokens);
         } catch (err) {
-          this.logger.error(`Meeting sync failed for user=${firebaseUid}`, err);
+          this.logger.error(
+            `Meeting sync failed for user=${firebaseUid}`,
+            err instanceof Error ? err.stack : String(err),
+          );
         }
       }
     }
@@ -122,11 +117,44 @@ export class MeetingsScheduler {
     this.logger.log('Finished syncMeetingsCron');
   }
 
-  @Interval(15 * 60 * 1000) // every 15 minutes
-  async reconcileMeetingStatusCron() {
-    this.logger.log('Running reconcileMeetingStatusCron');
+  // Todo: Shift to providers module.
+  private async updateProviderLastSyncedAt(
+    userId: string,
+    tokens: {
+      zoomAccessToken?: string;
+      googleMeetAccessToken?: string;
+      teamsAccessToken?: string;
+    },
+  ) {
+    const providersToUpdate: ProviderOptions[] = [];
 
-    // Directly update overdue meetings without loading into memory
-    await this.meetingsService.reconcileMeetingStatus();
+    if (tokens.zoomAccessToken) {
+      providersToUpdate.push(ProviderOptions.zoom);
+    }
+
+    if (tokens.googleMeetAccessToken) {
+      providersToUpdate.push(ProviderOptions.google_meet);
+    }
+
+    if (tokens.teamsAccessToken) {
+      providersToUpdate.push(ProviderOptions.teams);
+    }
+
+    if (providersToUpdate.length === 0) {
+      return;
+    }
+
+    await this.providersRepository
+      .createQueryBuilder()
+      .update(Provider)
+      .set({
+        lastSyncedAt: () => 'NOW()',
+      })
+      .where('user_id = :userId', { userId })
+      .andWhere('provider_name IN (:...providers)', {
+        providers: providersToUpdate,
+      })
+      .andWhere('is_connected = true')
+      .execute();
   }
 }
