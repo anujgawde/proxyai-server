@@ -14,7 +14,9 @@ import { QAEntry } from './entities/qa-entry.entity';
 import { RAGModule } from './rag/rag.module';
 import { ProvidersModule } from './providers/providers.module';
 import { ScheduleModule } from '@nestjs/schedule';
-import { BotService } from './bot/bot.service';
+
+import { SseModule } from './sse/sse.module';
+import { WebhookController } from './webhook/webhook.controller';
 
 @Module({
   imports: [
@@ -52,8 +54,9 @@ import { BotService } from './bot/bot.service';
     MeetingsModule,
     RAGModule,
     ProvidersModule,
+    SseModule,
   ],
-  controllers: [AppController],
-  providers: [AppService, TranscriptEntry, QAEntry, GeminiService, BotService],
+  controllers: [AppController, WebhookController],
+  providers: [AppService, TranscriptEntry, QAEntry, GeminiService],
 })
 export class AppModule {}

@@ -16,7 +16,7 @@ import { MeetingsScheduler } from './meetings.scheduler';
 import { ProvidersZoomService } from 'src/providers/providers-zoom.service';
 import { ProvidersGoogleService } from 'src/providers/providers-google.service';
 import { Provider } from 'src/entities/providers.entity';
-import { BotService } from 'src/bot/bot.service';
+import { SseService } from 'src/sse/sse.service';
 
 @Module({
   imports: [
@@ -40,7 +40,7 @@ import { BotService } from 'src/bot/bot.service';
     MeetingsScheduler,
     ProvidersZoomService,
     ProvidersGoogleService,
-    BotService,
+    SseService,
   ],
   exports: [MeetingsService],
 })

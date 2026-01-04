@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -12,10 +12,17 @@ import { TranscriptsService } from 'src/transcripts/transcripts.service';
 import { Summary } from 'src/entities/summary.entity';
 import { QAEntry } from 'src/entities/qa-entry.entity';
 import axios from 'axios';
-import { BotService } from 'src/bot/bot.service';
+import {
+  BotStateTriggerData,
+  BotWebhookDto,
+  ScheduleBotParams,
+  ScheduledBot,
+} from 'src/entities/bot.entity';
+import { SseService } from 'src/sse/sse.service';
 
 @Injectable()
 export class MeetingsService {
+  private readonly logger = new Logger(MeetingsService.name);
   constructor(
     @InjectRepository(Meeting)
     private meetingsRepository: Repository<Meeting>,
@@ -28,8 +35,26 @@ export class MeetingsService {
     @InjectRepository(QAEntry)
     private qaRepository: Repository<QAEntry>,
     private transcriptsService: TranscriptsService,
-    private botService: BotService,
+    private sseService: SseService,
   ) {}
+
+  /**
+   * Get a meeting by ID with ownership verification
+   */
+  async getMeetingById(
+    meetingId: number,
+    userId: string,
+  ): Promise<Meeting | null> {
+    const meeting = await this.meetingsRepository.findOne({
+      where: {
+        id: meetingId,
+        userId: { firebaseUid: userId },
+        isDeleted: false,
+      },
+    });
+
+    return meeting;
+  }
 
   async getMeetingsByStatus(
     firebaseUid: string,
@@ -100,6 +125,64 @@ export class MeetingsService {
 
     return results;
   }
+  /**
+   * BOT STATE → MEETING STATUS MAPPING
+   * This is CRITICAL for correct Upcoming → Live → Past transitions
+   */
+  private readonly BOT_STATE_TO_MEETING_STATUS: Record<
+    string,
+    MeetingStatus | undefined
+  > = {
+    joining: MeetingStatus.LIVE,
+    joined_not_recording: MeetingStatus.LIVE,
+    joined_recording: MeetingStatus.LIVE,
+
+    post_processing: MeetingStatus.PAST,
+    ended: MeetingStatus.PAST,
+    left: MeetingStatus.PAST,
+    fatal_error: MeetingStatus.PAST,
+  };
+
+  /*
+   * Send a meeting bot state change to the user
+   */
+  async updateMeetingFromBotState(payload: BotWebhookDto) {
+    const { bot_id, data } = payload;
+
+    const botData = data as any;
+
+    const meeting = await this.meetingsRepository.findOne({
+      where: { botId: bot_id, isDeleted: false },
+      relations: ['userId'],
+    });
+
+    if (!meeting) return;
+
+    const newStatus = this.BOT_STATE_TO_MEETING_STATUS[botData.new_state];
+
+    if (!newStatus || meeting.status === newStatus) {
+      return;
+    }
+
+    meeting.status = newStatus;
+    await this.meetingsRepository.save(meeting);
+
+    if (newStatus === MeetingStatus.PAST) {
+      await this.transcriptsService.flushAndClearMeeting(meeting.id.toString());
+    }
+
+    // Todo: Not working as of now.
+    this.sseService.sendUserUpdate(meeting.userId.firebaseUid, {
+      type: 'bot_state_change',
+      state: botData.new_state,
+      status: meeting.status,
+      meetingId: meeting.id,
+      meetingUrl: meeting.meetingUrl,
+      botId: bot_id,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  async handleTranscriptUpdate(BotWebhookDto: any): Promise<void> {}
 
   // Private Methods:
 
@@ -230,8 +313,14 @@ export class MeetingsService {
 
         if (exists) continue;
 
+        const meetingBot: ScheduledBot | undefined =
+          await this.scheduleMeetingBot({
+            meetingUrl: meetLink,
+            startTime: startTime,
+          });
+
         const createdMeeting = this.meetingsRepository.create({
-          title: event.summary ?? 'Google Meet',
+          title: event.summary ?? 'Untitled Google Meet',
           description: event.description ?? null,
           startTime,
           timezone: event.start?.timeZone ?? null,
@@ -244,14 +333,11 @@ export class MeetingsService {
           provider: MeetingProvider.GOOGLE_MEET,
           userId: { firebaseUid },
           providerMetadata: { event },
+          botId: meetingBot?.id ?? '',
         });
 
         await this.meetingsRepository.save(createdMeeting);
         synced++;
-        this.botService.scheduleBotForMeeting({
-          meetingUrl: meetLink,
-          startTime: startTime,
-        });
       } catch (err) {
         console.error(`Error processing Google event ${event.id}:`, err);
         continue;
@@ -261,8 +347,36 @@ export class MeetingsService {
     return { synced };
   }
 
-  // Sync Teams Meetings
+  private async scheduleMeetingBot(params: ScheduleBotParams) {
+    const { meetingUrl, startTime, botName = "ProxyAI's Bot" } = params;
+    try {
+      const response = await axios.post(
+        `${process.env.BOT_SERVICE_URL}`,
+        {
+          meeting_url: meetingUrl,
+          bot_name: botName,
+          join_at: startTime,
+        },
+        {
+          headers: {
+            Authorization: `Token ${process.env.BOT_SERVICE_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      this.logger.log(
+        `Bot scheduled successfully for meeting: ${meetingUrl} | Bot ID: ${response.data?.bot_id || 'N/A'}`,
+      );
+      return response.data;
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to schedule bot for meeting: ${meetingUrl}`,
+        err?.response?.data || err?.message || err,
+      );
+    }
+  }
 
+  // Sync Teams Meetings
   private async syncTeamsMeetings(_firebaseUid: string, _accessToken: string) {
     return { synced: 0 };
   }

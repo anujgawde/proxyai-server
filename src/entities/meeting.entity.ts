@@ -82,6 +82,9 @@ export class Meeting {
   @Column('boolean', { default: false, name: 'is_deleted' })
   isDeleted: boolean;
 
+  @Column('varchar', { nullable: true, name: 'bot_id' })
+  botId: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
