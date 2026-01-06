@@ -21,10 +21,10 @@ export class QAEntry {
   @PrimaryGeneratedColumn('increment')
   id: number;
 
-  @Column('varchar', { length: 255 })
+  @Column('varchar', { length: 255, name: 'user_id' })
   userId: string;
 
-  @Column('int')
+  @Column('int', { name: 'meeting_id' })
   meetingId: number;
 
   @Column('text')

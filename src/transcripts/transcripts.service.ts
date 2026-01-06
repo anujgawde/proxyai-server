@@ -11,10 +11,12 @@ import {
   TranscriptEntry,
   TranscriptData,
 } from 'src/entities/transcript-entry.entity';
+import { TranscriptSegment } from 'src/entities/transcript-segment.entity';
 import { Meeting } from 'src/entities/meeting.entity';
 import { GeminiService } from 'src/gemini/gemini.service';
 import { Summary } from 'src/entities/summary.entity';
 import { RAGService } from 'src/rag/rag.service';
+import { MeetingsService } from 'src/meetings/meetings.service';
 
 interface BufferMetadata {
   transcripts: TranscriptData[];
@@ -24,197 +26,215 @@ interface BufferMetadata {
 @Injectable()
 export class TranscriptsService implements OnModuleDestroy {
   private readonly logger = new Logger(TranscriptsService.name);
-  private transcriptBuffer = new Map<string, BufferMetadata>();
-  private flushIntervals = new Map<string, NodeJS.Timeout>();
+  private transcriptBuffer = new Map<number, BufferMetadata>();
+  private flushIntervals = new Map<number, NodeJS.Timeout>();
   private readonly FLUSH_INTERVAL = 1 * 60 * 1000;
 
   constructor(
     @InjectRepository(TranscriptEntry)
     private transcriptRepository: Repository<TranscriptEntry>,
-    @InjectRepository(Meeting)
-    private meetingsRepository: Repository<Meeting>,
+    @InjectRepository(TranscriptSegment)
+    private transcriptSegmentRepository: Repository<TranscriptSegment>,
     @InjectRepository(Summary)
     private summaryRepository: Repository<Summary>,
     @Inject(forwardRef(() => GeminiService))
     private geminiService: GeminiService,
     @Inject(forwardRef(() => RAGService))
     private ragService: RAGService,
+    @Inject(forwardRef(() => MeetingsService))
+    private meetingsService: MeetingsService,
   ) {}
 
-  addTranscript(
-    meetingId: string,
-    speakerEmail: string,
-    speakerName: string,
-    text: string,
-  ): void {
-    // const currentTimeISO = new Date().toISOString();
-    // if (!this.transcriptBuffer.has(meetingId)) {
-    //   this.logger.log(
-    //     `Initializing new buffer for meeting ${meetingId} at ${currentTimeISO}`,
-    //   );
-    //   this.transcriptBuffer.set(meetingId, {
-    //     transcripts: [],
-    //     timeStart: currentTimeISO,
-    //   });
-    //   this.startFlushInterval(meetingId);
-    // }
-    // const bufferData = this.transcriptBuffer.get(meetingId)!;
-    // const buffer = bufferData.transcripts;
-    // const lastEntry = buffer[buffer.length - 1];
-    // if (lastEntry && lastEntry.speakerEmail === speakerEmail) {
-    //   const lastTimestamp = new Date(lastEntry.timestamp);
-    //   const currentTime = new Date(currentTimeISO);
-    //   const timeDiff = currentTime.getTime() - lastTimestamp.getTime();
-    //   if (timeDiff < 5000) {
-    //     lastEntry.text += ' ' + text;
-    //     lastEntry.timestamp = currentTimeISO;
-    //     this.logger.debug(
-    //       `Merged transcript for ${speakerEmail} in meeting ${meetingId}`,
-    //     );
-    //     return;
-    //   }
-    // }
-    // buffer.push({
-    //   speakerEmail,
-    //   speakerName,
-    //   text: text.trim(),
-    //   timestamp: currentTimeISO,
-    // });
-    // this.logger.debug(
-    //   `Added transcript to buffer for meeting ${meetingId}. Buffer size: ${buffer.length}`,
-    // );
+  async addTranscript(meeting: Meeting, transcriptionData: any): Promise<void> {
+    // Save individual segment to database immediately
+    const segment = this.transcriptSegmentRepository.create({
+      meetingId: meeting.id,
+      speakerName: transcriptionData.speaker_name,
+      speakerUuid: transcriptionData.speaker_uuid,
+      speakerUserUuid: transcriptionData.speaker_user_uuid,
+      speakerIsHost: transcriptionData.speaker_is_host,
+      transcript: transcriptionData.transcription.transcript,
+      words: transcriptionData.transcription.words,
+      timestampMs: transcriptionData.timestamp_ms.toString(),
+      durationMs: transcriptionData.duration_ms.toString(),
+    });
+
+    await this.transcriptSegmentRepository.save(segment);
+
+    this.logger.log(
+      `Saved transcript segment ${segment.id} for meeting ${meeting.id}`,
+    );
+
+    // Emit to frontend via SSE immediately
+    this.meetingsService.transcriptEvents$.next({
+      userId: meeting.userId,
+      type: 'transcript_update',
+      data: transcriptionData,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Add to buffer for 1-minute grouping
+    if (!this.transcriptBuffer.has(meeting.id)) {
+      this.logger.log(`Initializing new buffer for meeting ${meeting.id}`);
+      this.transcriptBuffer.set(meeting.id, {
+        transcripts: [],
+        timeStart: new Date(transcriptionData.timestamp_ms).toISOString(),
+      });
+      this.startFlushInterval(meeting.id);
+    }
+
+    const bufferData = this.transcriptBuffer.get(meeting.id)!;
+    const buffer = bufferData.transcripts;
+
+    // Add to buffer without merging (let RAG service handle grouping)
+    buffer.push({
+      speaker_name: transcriptionData.speaker_name,
+      speaker_uuid: transcriptionData.speaker_uuid,
+      speaker_user_uuid: transcriptionData.speaker_user_uuid,
+      speaker_is_host: transcriptionData.speaker_is_host,
+      timestamp_ms: transcriptionData.timestamp_ms,
+      duration_ms: transcriptionData.duration_ms,
+      transcription: {
+        transcript: transcriptionData.transcription.transcript,
+        words: transcriptionData.transcription.words,
+      },
+    });
+
+    this.logger.debug(
+      `Added transcript to buffer for meeting ${meeting.id}. Buffer size: ${buffer.length}`,
+    );
   }
 
-  private startFlushInterval(meetingId: string): void {
-    // if (this.flushIntervals.has(meetingId)) {
-    //   return;
-    // }
-    // const interval = setInterval(async () => {
-    //   await this.flushMeetingBuffer(meetingId);
-    // }, this.FLUSH_INTERVAL);
-    // this.flushIntervals.set(meetingId, interval);
-    // this.logger.log(`Started flush interval for meeting ${meetingId}`);
+  private startFlushInterval(meetingId: number): void {
+    if (this.flushIntervals.has(meetingId)) {
+      return;
+    }
+    const interval = setInterval(async () => {
+      await this.flushMeetingBuffer(meetingId);
+    }, this.FLUSH_INTERVAL);
+    this.flushIntervals.set(meetingId, interval);
+    this.logger.log(`Started flush interval for meeting ${meetingId}`);
   }
 
-  async flushMeetingBuffer(meetingId: string): Promise<void> {
-    // const bufferData = this.transcriptBuffer.get(meetingId);
-    // if (!bufferData || bufferData.transcripts.length === 0) {
-    //   this.logger.debug(`No transcripts to flush for meeting ${meetingId}`);
-    //   return;
-    // }
-    // try {
-    //   const meeting = await this.meetingsRepository.findOne({
-    //     where: { id: meetingId },
-    //   });
-    //   if (!meeting) {
-    //     this.logger.warn(`Meeting ${meetingId} not found, clearing buffer`);
-    //     this.clearMeetingBuffer(meetingId);
-    //     return;
-    //   }
-    //   const transcriptsToSave = [...bufferData.transcripts];
-    //   const timeStart = bufferData.timeStart;
-    //   const timeEnd = new Date().toISOString();
-    //   // Reset buffer
-    //   this.transcriptBuffer.set(meetingId, {
-    //     transcripts: [],
-    //     timeStart: timeEnd,
-    //   });
-    //   // Save to database
-    //   const transcriptEntry = this.transcriptRepository.create({
-    //     transcripts: transcriptsToSave,
-    //     meetingId: meetingId,
-    //     timeStart: timeStart,
-    //     timeEnd: timeEnd,
-    //   });
-    //   const savedEntry = await this.transcriptRepository.save(transcriptEntry);
-    //   this.logger.log(
-    //     `Flushed ${transcriptsToSave.length} transcript segments for meeting ${meetingId}`,
-    //   );
-    //   // Broadcast flushed transcripts
-    //   if (this.gateway) {
-    //     this.gateway.broadcastTranscriptsFlushed(meetingId, {
-    //       entryId: savedEntry.id,
-    //       transcripts: transcriptsToSave,
-    //       timeStart: timeStart,
-    //       timeEnd: timeEnd,
-    //     });
-    //   }
-    //   // Store in vector database for RAG
-    //   try {
-    //     await this.ragService.storeTranscripts(meetingId, transcriptsToSave);
-    //     this.logger.log(
-    //       `Stored transcripts in vector database for meeting ${meetingId}`,
-    //     );
-    //   } catch (ragError) {
-    //     this.logger.error(
-    //       `Error storing transcripts in vector database: ${ragError.message}`,
-    //     );
-    //     // Don't throw - continue with summary generation even if vector storage fails
-    //   }
-    //   // Generate summary
-    //   this.generateAndSaveSummary(meetingId, transcriptsToSave);
-    // } catch (error) {
-    //   this.logger.error(
-    //     `Error flushing transcripts for meeting ${meetingId}:`,
-    //     error,
-    //   );
-    // }
+  async flushMeetingBuffer(meetingId: number): Promise<void> {
+    const bufferData = this.transcriptBuffer.get(meetingId);
+    if (!bufferData || bufferData.transcripts.length === 0) {
+      this.logger.debug(`No transcripts to flush for meeting ${meetingId}`);
+      return;
+    }
+
+    try {
+      const meeting = await this.meetingsService.getMeetingById(meetingId);
+      if (!meeting) {
+        this.logger.warn(`Meeting ${meetingId} not found, clearing buffer`);
+        this.clearMeetingBuffer(meetingId);
+        return;
+      }
+
+      const transcriptsToProcess = [...bufferData.transcripts];
+      const timeStart = bufferData.timeStart;
+      const timeEnd = new Date().toISOString();
+
+      // Reset buffer immediately
+      this.transcriptBuffer.set(meetingId, {
+        transcripts: [],
+        timeStart: timeEnd,
+      });
+
+      // Group transcripts by speaker for Qdrant (call RAG's chunking)
+      const groupedChunks =
+        this.ragService.chunkTranscriptsForContext(transcriptsToProcess);
+
+      // Save grouped chunks to TranscriptEntry
+      // Store the same grouped structure that goes to Qdrant
+      const transcriptEntry = this.transcriptRepository.create({
+        transcripts: transcriptsToProcess,
+        meetingId: meetingId,
+        timeStart: timeStart,
+        timeEnd: timeEnd,
+      });
+      await this.transcriptRepository.save(transcriptEntry);
+
+      this.logger.log(
+        `Flushed ${transcriptsToProcess.length} transcript segments (${groupedChunks.length} grouped chunks) for meeting ${meetingId}`,
+      );
+
+      // Store grouped chunks in Qdrant vector database
+      try {
+        await this.ragService.storeTranscripts(meetingId, transcriptsToProcess);
+        this.logger.log(
+          `Stored ${groupedChunks.length} grouped chunks in vector database for meeting ${meetingId}`,
+        );
+      } catch (ragError) {
+        this.logger.error(
+          `Error storing transcripts in vector database: ${ragError.message}`,
+        );
+        // Don't throw - continue with summary generation even if vector storage fails
+      }
+
+      // Generate summary from buffer
+      this.generateAndSaveSummary(meeting.id, transcriptsToProcess);
+    } catch (error) {
+      this.logger.error(
+        `Error flushing transcripts for meeting ${meetingId}:`,
+        error,
+      );
+    }
   }
 
-  async flushAndClearMeeting(meetingId: string): Promise<void> {
-    // await this.flushMeetingBuffer(meetingId);
-    // this.clearMeetingBuffer(meetingId);
+  async flushAndClearMeeting(meetingId: number): Promise<void> {
+    await this.flushMeetingBuffer(meetingId);
+    this.clearMeetingBuffer(meetingId);
   }
 
   private async generateAndSaveSummary(
-    meetingId: string,
+    meetingId: number,
     transcripts: TranscriptData[],
   ): Promise<void> {
-    // try {
-    //   this.logger.log(`Generating summary for meeting ${meetingId}...`);
-    //   const summaryContent =
-    //     await this.geminiService.generateSummary(transcripts);
-    //   const meeting = await this.meetingsRepository.findOne({
-    //     where: { id: meetingId },
-    //   });
-    //   if (!meeting) {
-    //     this.logger.warn(`Meeting ${meetingId} not found for summary`);
-    //     return;
-    //   }
-    //   const summary = this.summaryRepository.create({
-    //     content: summaryContent,
-    //     meetingId: meetingId,
-    //     meeting: meeting,
-    //   });
-    //   const savedSummary = await this.summaryRepository.save(summary);
-    //   this.logger.log(
-    //     `Summary saved for meeting ${meetingId}: ${savedSummary.id}`,
-    //   );
-    //   if (this.gateway) {
-    //     this.gateway.broadcastSummaryCreated(meetingId, {
-    //       id: savedSummary.id,
-    //       content: savedSummary.content,
-    //       createdAt: savedSummary.createdAt,
-    //     });
-    //   }
-    // } catch (error) {
-    //   this.logger.error(
-    //     `Error generating/saving summary for meeting ${meetingId}:`,
-    //     error,
-    //   );
-    // }
+    try {
+      this.logger.log(`Generating summary for meeting ${meetingId}...`);
+      const summaryContent =
+        await this.geminiService.generateSummary(transcripts);
+      const meeting = await this.meetingsService.getMeetingById(meetingId);
+      if (!meeting) {
+        this.logger.warn(`Meeting ${meetingId} not found for summary`);
+        return;
+      }
+      const summary = this.summaryRepository.create({
+        content: summaryContent,
+        meetingId: meetingId,
+        meeting: meeting,
+      });
+      const savedSummary = await this.summaryRepository.save(summary);
+      console.log(meeting.userId);
+      this.meetingsService.summaryEvent$.next({
+        userId: meeting.userId,
+        type: 'summary_update',
+        data: savedSummary,
+        timestamp: new Date().toISOString(),
+      });
+
+      this.logger.log(
+        `Summary saved for meeting ${meetingId}: ${savedSummary.id}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error generating/saving summary for meeting ${meetingId}:`,
+        error,
+      );
+    }
   }
 
-  private clearMeetingBuffer(meetingId: string): void {
-    // const interval = this.flushIntervals.get(meetingId);
-    // if (interval) {
-    //   clearInterval(interval);
-    //   this.flushIntervals.delete(meetingId);
-    // }
-    // this.transcriptBuffer.delete(meetingId);
-    // this.logger.log(
-    //   `Cleared buffer and stopped flush for meeting ${meetingId}`,
-    // );
+  private clearMeetingBuffer(meetingId: number): void {
+    const interval = this.flushIntervals.get(meetingId);
+    if (interval) {
+      clearInterval(interval);
+      this.flushIntervals.delete(meetingId);
+    }
+    this.transcriptBuffer.delete(meetingId);
+    this.logger.log(
+      `Cleared buffer and stopped flush for meeting ${meetingId}`,
+    );
   }
 
   // getBufferStatus(meetingId: string): {
@@ -241,14 +261,14 @@ export class TranscriptsService implements OnModuleDestroy {
   // }
 
   async onModuleDestroy() {
-    // this.logger.log('Flushing all buffers before shutdown...');
-    // const flushPromises = Array.from(this.transcriptBuffer.keys()).map(
-    //   (meetingId) => this.flushMeetingBuffer(meetingId),
-    // );
-    // await Promise.all(flushPromises);
-    // this.flushIntervals.forEach((interval) => clearInterval(interval));
-    // this.flushIntervals.clear();
-    // this.transcriptBuffer.clear();
-    // this.logger.log('Transcript buffer service shutdown complete');
+    this.logger.log('Flushing all buffers before shutdown...');
+    const flushPromises = Array.from(this.transcriptBuffer.keys()).map(
+      (meetingId) => this.flushMeetingBuffer(meetingId),
+    );
+    await Promise.all(flushPromises);
+    this.flushIntervals.forEach((interval) => clearInterval(interval));
+    this.flushIntervals.clear();
+    this.transcriptBuffer.clear();
+    this.logger.log('Transcript buffer service shutdown complete');
   }
 }

@@ -9,6 +9,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { TranscriptEntry } from './transcript-entry.entity';
+import { TranscriptSegment } from './transcript-segment.entity';
 import { Summary } from './summary.entity';
 import { QAEntry } from './qa-entry.entity';
 import { User } from './user.entity';
@@ -85,6 +86,9 @@ export class Meeting {
   @Column('varchar', { nullable: true, name: 'bot_id' })
   botId: string;
 
+  @Column('varchar', { name: 'user_id' })
+  userId: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
@@ -97,6 +101,12 @@ export class Meeting {
     onDelete: 'CASCADE',
   })
   transcripts: TranscriptEntry[];
+
+  @OneToMany(() => TranscriptSegment, (segment) => segment.meeting, {
+    cascade: true,
+    onDelete: 'CASCADE',
+  })
+  transcriptSegments: TranscriptSegment[];
 
   @OneToMany(() => Summary, (summary) => summary.meeting, {
     cascade: true,
@@ -115,5 +125,5 @@ export class Meeting {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'user_id', referencedColumnName: 'firebaseUid' })
-  userId: User;
+  user: User;
 }

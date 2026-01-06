@@ -18,13 +18,13 @@ export class Summary {
   @Column('text')
   content: string;
 
-  @Column('int')
+  @Column({ type: 'int', name: 'meeting_id' })
   meetingId: number;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 
   // Relations

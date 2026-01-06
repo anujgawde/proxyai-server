@@ -7,6 +7,7 @@ import { User } from 'src/entities/user.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Meeting } from 'src/entities/meeting.entity';
 import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
+import { TranscriptSegment } from 'src/entities/transcript-segment.entity';
 import { Summary } from 'src/entities/summary.entity';
 import { TranscriptsService } from 'src/transcripts/transcripts.service';
 import { GeminiService } from 'src/gemini/gemini.service';
@@ -16,7 +17,6 @@ import { MeetingsScheduler } from './meetings.scheduler';
 import { ProvidersZoomService } from 'src/providers/providers-zoom.service';
 import { ProvidersGoogleService } from 'src/providers/providers-google.service';
 import { Provider } from 'src/entities/providers.entity';
-import { SseService } from 'src/sse/sse.service';
 
 @Module({
   imports: [
@@ -24,6 +24,7 @@ import { SseService } from 'src/sse/sse.service';
       User,
       Meeting,
       TranscriptEntry,
+      TranscriptSegment,
       Summary,
       QAEntry,
       Provider,
@@ -40,7 +41,6 @@ import { SseService } from 'src/sse/sse.service';
     MeetingsScheduler,
     ProvidersZoomService,
     ProvidersGoogleService,
-    SseService,
   ],
   exports: [MeetingsService],
 })

@@ -15,12 +15,11 @@ import { RAGModule } from './rag/rag.module';
 import { ProvidersModule } from './providers/providers.module';
 import { ScheduleModule } from '@nestjs/schedule';
 
-import { SseModule } from './sse/sse.module';
 import { WebhookController } from './webhook/webhook.controller';
 
 @Module({
   imports: [
-    // ScheduleModule.forRoot(),
+    ScheduleModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
       load: [databaseConfig, firebaseConfig],
@@ -54,7 +53,6 @@ import { WebhookController } from './webhook/webhook.controller';
     MeetingsModule,
     RAGModule,
     ProvidersModule,
-    SseModule,
   ],
   controllers: [AppController, WebhookController],
   providers: [AppService, TranscriptEntry, QAEntry, GeminiService],

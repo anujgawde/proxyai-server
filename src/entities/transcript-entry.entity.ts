@@ -10,10 +10,13 @@ import {
 import { Meeting } from './meeting.entity';
 
 export interface TranscriptData {
-  speakerEmail: string;
-  speakerName: string;
-  text: string;
-  timestamp: string;
+  speaker_name: string;
+  speaker_uuid: string;
+  speaker_user_uuid: string;
+  speaker_is_host: boolean;
+  timestamp_ms: number;
+  duration_ms: string;
+  transcription: { transcript: string; words: number };
 }
 
 @Entity('transcript_entries')
@@ -26,16 +29,16 @@ export class TranscriptEntry {
   @Column('jsonb')
   transcripts: TranscriptData[];
 
-  @Column('int')
+  @Column({ type: 'int', name: 'meeting_id' })
   meetingId: number;
 
-  @Column('timestamp', { default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ type: 'timestamp', name: 'time_start' })
   timeStart: Date;
 
-  @Column('timestamp', { nullable: true })
+  @Column('timestamp', { nullable: true, name: 'time_end' })
   timeEnd: Date;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
   // Relations

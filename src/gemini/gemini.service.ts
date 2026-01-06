@@ -24,7 +24,7 @@ export class GeminiService {
     try {
       // Format transcripts into a readable conversation
       const conversationText = transcripts
-        .map((t) => `${t.speakerName}: ${t.text}`)
+        .map((t) => `${t.speaker_name}: ${t.transcription.transcript}`)
         .join('\n');
 
       const promptPath = path.join(__dirname, 'prompts', 'summary_prompt.txt');
