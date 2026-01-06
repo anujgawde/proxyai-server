@@ -59,10 +59,9 @@ export class UsersService {
 
   async googleSignIn(signUpData: SignUpDto): Promise<User> {
     try {
-      let existingUser = await this.usersRepository.findOne({
+      const existingUser = await this.usersRepository.findOne({
         where: { email: signUpData.email },
       });
-      console.log(signUpData, existingUser);
       if (existingUser) {
         return existingUser;
       }

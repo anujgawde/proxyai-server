@@ -89,7 +89,6 @@ export class ProvidersGoogleService {
         },
         { headers: { 'Content-Type': 'application/json' } },
       );
-      console.log(res.data, 'logging google refresh token');
       return res.data;
     } catch (err: any) {
       this.logger.error('Failed to refresh Google access token');

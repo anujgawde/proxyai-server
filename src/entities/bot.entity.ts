@@ -39,11 +39,11 @@ export enum BotTranscriptionState {
 }
 export interface ScheduledBot {
   deduplication_key: string;
-  events: Object[];
+  events: object[];
   id: string;
   join_at: string;
   meeting_url: string;
-  metadata: Object;
+  metadata: object;
   recording_state: BotRecordingState;
   state: BotState;
   transcription_state: BotTranscriptionState;

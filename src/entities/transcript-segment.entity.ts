@@ -26,7 +26,12 @@ export class TranscriptSegment {
   @Column({ type: 'varchar', length: 255, name: 'speaker_uuid' })
   speakerUuid: string;
 
-  @Column({ type: 'varchar', length: 255, name: 'speaker_user_uuid', nullable: true })
+  @Column({
+    type: 'varchar',
+    length: 255,
+    name: 'speaker_user_uuid',
+    nullable: true,
+  })
   speakerUserUuid: string;
 
   @Column({ type: 'boolean', name: 'speaker_is_host', default: false })

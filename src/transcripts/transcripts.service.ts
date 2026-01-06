@@ -206,7 +206,6 @@ export class TranscriptsService implements OnModuleDestroy {
         meeting: meeting,
       });
       const savedSummary = await this.summaryRepository.save(summary);
-      console.log(meeting.userId);
       this.meetingsService.summaryEvent$.next({
         userId: meeting.userId,
         type: 'summary_update',
