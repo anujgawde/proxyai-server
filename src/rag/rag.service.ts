@@ -40,7 +40,6 @@ export class RAGService implements OnModuleInit {
   private readonly collectionName = 'meeting_transcripts';
   private readonly embeddingModel = 'Xenova/all-MiniLM-L6-v2';
   private isEmbeddingModelLoaded = false;
-  private modelLoadingPromise: Promise<void> | null = null;
 
   constructor(
     @InjectRepository(QAEntry)
@@ -57,50 +56,18 @@ export class RAGService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    // DON'T load model on startup - load it when needed
-    this.logger.log('RAGService initialized - model will load on first use');
+    await this.initializeEmbeddingModel();
     await this.initializeCollection();
-  }
-
-  private logMemoryUsage(label: string) {
-    const used = process.memoryUsage();
-    this.logger.log(
-      `[MEMORY-${label}] Heap Used: ${Math.round(used.heapUsed / 1024 / 1024)}MB / ${Math.round(used.heapTotal / 1024 / 1024)}MB`,
-    );
-    this.logger.log(
-      `[MEMORY-${label}] RSS: ${Math.round(used.rss / 1024 / 1024)}MB`,
-    );
-    this.logger.log(
-      `[MEMORY-${label}] External: ${Math.round(used.external / 1024 / 1024)}MB`,
-    );
-  }
-
-  private async ensureModelLoaded(): Promise<void> {
-    if (this.isEmbeddingModelLoaded) {
-      return; // Already loaded
-    }
-
-    // Prevent multiple simultaneous loads
-    if (this.modelLoadingPromise) {
-      this.logger.log('Model already loading, waiting...');
-      return this.modelLoadingPromise;
-    }
-
-    this.modelLoadingPromise = this.initializeEmbeddingModel();
-    await this.modelLoadingPromise;
-    this.modelLoadingPromise = null;
   }
 
   private async initializeEmbeddingModel() {
     try {
-      this.logger.log('Loading local embedding model (on-demand)...');
-      this.logMemoryUsage('BEFORE_MODEL_LOAD');
-
+      this.logger.log('Loading local embedding model...');
       this.embeddingPipeline = await pipeline(
         'feature-extraction',
         this.embeddingModel,
         {
-          quantized: true,
+          quantized: false,
           progress_callback: (progress) => {
             if (progress.status === 'downloading') {
               this.logger.log(
@@ -110,14 +77,10 @@ export class RAGService implements OnModuleInit {
           },
         },
       );
-
       this.isEmbeddingModelLoaded = true;
       this.logger.log('Local embedding model initialized successfully');
-      this.logMemoryUsage('AFTER_MODEL_LOAD');
     } catch (error) {
       this.logger.error('Error initializing embedding model:', error);
-      this.isEmbeddingModelLoaded = false;
-      this.modelLoadingPromise = null;
       throw new Error('Failed to initialize local embedding model');
     }
   }
@@ -183,9 +146,14 @@ export class RAGService implements OnModuleInit {
     }
   }
 
+  private async waitForModelLoad(): Promise<void> {
+    while (!this.isEmbeddingModelLoaded) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
   private async generateEmbedding(text: string): Promise<number[]> {
-    // Ensure model is loaded before using it
-    await this.ensureModelLoaded();
+    await this.waitForModelLoad();
 
     try {
       const output = await this.embeddingPipeline(text, {
@@ -207,21 +175,21 @@ export class RAGService implements OnModuleInit {
   }
 
   private async generateEmbeddings(texts: string[]): Promise<number[][]> {
-    // Ensure model is loaded before processing batch
-    await this.ensureModelLoaded();
+    await this.waitForModelLoad();
 
     const embeddings: number[][] = [];
+    const batchSize = 10;
 
     this.logger.log(`Generating embeddings for ${texts.length} texts...`);
 
-    // Process one at a time to minimize memory
-    for (let i = 0; i < texts.length; i++) {
-      const embedding = await this.generateEmbedding(texts[i]);
-      embeddings.push(embedding);
+    for (let i = 0; i < texts.length; i += batchSize) {
+      const batch = texts.slice(i, i + batchSize);
+      const batchPromises = batch.map((text) => this.generateEmbedding(text));
+      const batchEmbeddings = await Promise.all(batchPromises);
+      embeddings.push(...batchEmbeddings);
 
-      if ((i + 1) % 10 === 0) {
-        this.logger.log(`Generated embeddings: ${i + 1}/${texts.length}`);
-      }
+      const processed = Math.min(i + batchSize, texts.length);
+      this.logger.log(`Generated embeddings: ${processed}/${texts.length}`);
     }
 
     return embeddings;
@@ -244,6 +212,18 @@ export class RAGService implements OnModuleInit {
     segmentCount: number;
   }> {
     if (transcripts.length === 0) return [];
+
+    // {
+    //   speaker_name: transcriptionData.speaker_name,
+    //   speaker_uuid: transcriptionData.speaker_uuid,
+    //   speaker_user_uuid: transcriptionData.speaker_user_uuid,
+    //   speaker_is_host: transcriptionData.speaker_is_host,
+    //   timestamp_ms: transcriptionData.timestamp_ms,
+    //   duration_ms: transcriptionData.duration_ms,
+    //   transcription: {
+    //     transcript: transcriptionData.transcript,
+    //     words: transcriptionData.words,
+    //   },
 
     const chunks: Array<{
       transcript: string;
@@ -310,7 +290,6 @@ export class RAGService implements OnModuleInit {
       this.logger.log(
         `[VECTOR-STORAGE] Processing ${transcripts.length} transcripts for meeting ${meetingId}`,
       );
-      this.logMemoryUsage('STORE_START');
 
       // Chunk transcripts to maintain context
       const chunks = this.chunkTranscriptsForContext(transcripts);
@@ -319,105 +298,85 @@ export class RAGService implements OnModuleInit {
         `[VECTOR-STORAGE] Created ${chunks.length} context-aware chunks from ${transcripts.length} segments`,
       );
 
-      // Process in small batches to avoid OOM
-      const BATCH_SIZE = 10; // Only 10 chunks at a time
-      let totalProcessed = 0;
+      // Create content texts for embeddings
+      const contentTexts = chunks.map(
+        (chunk) => `${chunk.speakerName}: ${chunk.transcript}`,
+      );
 
-      for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-        const batchChunks = chunks.slice(i, i + BATCH_SIZE);
+      // Generate embeddings for chunks
+      const embeddings = await this.generateEmbeddings(contentTexts);
 
-        this.logger.log(
-          `[BATCH] Processing chunks ${i + 1}-${Math.min(i + BATCH_SIZE, chunks.length)} of ${chunks.length}`,
-        );
+      // Create points for storage
+      const points: Array<{
+        id: string;
+        vector: number[];
+        payload: {
+          meetingId: number;
+          chunkId: string;
+          transcript: string;
+          speaker: string;
+          speakerName: string;
+          text: string;
+          timestamp: number;
+          segmentCount: number;
+          contentHash: string;
+        };
+      }> = [];
 
-        // Create content texts for this batch only
-        const contentTexts = batchChunks.map(
-          (chunk) => `${chunk.speakerName}: ${chunk.transcript}`,
-        );
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const content = contentTexts[i];
 
-        // Generate embeddings for this batch only
-        const embeddings = await this.generateEmbeddings(contentTexts);
+        if (
+          !embeddings[i] ||
+          !Array.isArray(embeddings[i]) ||
+          embeddings[i].length !== 384
+        ) {
+          this.logger.error(`Invalid embedding at index ${i}`);
+          continue;
+        }
 
-        // Create points for this batch only
-        const points: Array<{
-          id: string;
-          vector: number[];
+        // Use startTime for hash to ensure uniqueness per chunk
+        const contentHash = this.createContentHash(content, chunk.timestamp);
+
+        const point = {
+          id: contentHash,
+          vector: embeddings[i],
           payload: {
-            meetingId: number;
-            chunkId: string;
-            transcript: string;
-            speaker: string;
-            speakerName: string;
-            text: string;
-            timestamp: number;
-            segmentCount: number;
-            contentHash: string;
-          };
-        }> = [];
+            meetingId,
+            chunkId: uuidv4(),
+            content,
+            speaker: chunk.speaker,
+            speakerName: chunk.speakerName,
+            text: chunk.transcript,
+            transcript: chunk.transcript,
+            segmentCount: chunk.segmentCount,
+            timestamp: chunk.timestamp,
+            contentHash,
+          },
+        };
 
-        for (let j = 0; j < batchChunks.length; j++) {
-          const chunk = batchChunks[j];
-          const content = contentTexts[j];
-
-          if (!embeddings[j] || embeddings[j].length !== 384) {
-            this.logger.error(`Invalid embedding at index ${j}`);
-            continue;
-          }
-
-          const contentHash = this.createContentHash(content, chunk.timestamp);
-
-          points.push({
-            id: contentHash,
-            vector: embeddings[j],
-            payload: {
-              meetingId,
-              chunkId: uuidv4(),
-              text: chunk.transcript,
-              speaker: chunk.speaker,
-              speakerName: chunk.speakerName,
-              transcript: chunk.transcript,
-              segmentCount: chunk.segmentCount,
-              timestamp: chunk.timestamp,
-              contentHash,
-            },
-          });
-        }
-
-        // Upsert this batch
-        if (points.length > 0) {
-          await this.qdrantClient.upsert(this.collectionName, {
-            wait: true,
-            points,
-          });
-          totalProcessed += points.length;
-        }
-
-        // Clear batch from memory
-        contentTexts.length = 0;
-        embeddings.length = 0;
-        points.length = 0;
-
-        // Force GC if available
-        if (global.gc) {
-          global.gc();
-        }
-
-        this.logger.log(
-          `[BATCH] Completed. Total processed: ${totalProcessed}/${chunks.length}`,
-        );
-
-        if ((i / BATCH_SIZE + 1) % 5 === 0) {
-          this.logMemoryUsage(`BATCH_${i / BATCH_SIZE + 1}`);
-        }
+        points.push(point);
       }
 
+      if (points.length === 0) {
+        this.logger.error('No valid points to upsert');
+        return;
+      }
+
+      await this.qdrantClient.upsert(this.collectionName, {
+        wait: true,
+        points,
+      });
+
       this.logger.log(
-        `[VECTOR-STORAGE] Successfully stored ${totalProcessed} chunks for meeting ${meetingId}`,
+        `[VECTOR-STORAGE] Successfully stored ${points.length} context-aware chunks for meeting ${meetingId}`,
       );
-      this.logMemoryUsage('STORE_COMPLETE');
+      this.logger.log(
+        `[VECTOR-STORAGE] Average segments per chunk: ${(transcripts.length / chunks.length).toFixed(1)}`,
+      );
     } catch (error) {
       this.logger.error('Error storing transcripts:', error);
-      this.logMemoryUsage('STORE_ERROR');
       throw error;
     }
   }
