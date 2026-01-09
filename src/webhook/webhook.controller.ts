@@ -23,15 +23,15 @@ export class WebhookController {
 
   @Post('/bots')
   @HttpCode(200)
-  // @UseGuards(AttendeeWebhookGuard)
-  // @UsePipes(
-  //   new ValidationPipe({
-  //     transform: false,
-  //     whitelist: false,
-  //     forbidNonWhitelisted: false,
-  //   }),
-  // )
-  async handleBotWebhook(@Body() payload: any) {
+  @UseGuards(AttendeeWebhookGuard)
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: false,
+    }),
+  )
+  async handleBotWebhook(@Body() payload: BotWebhookDto) {
     this.logger.log(
       `Received Webhook trigger ${payload.trigger} for bot ${payload.bot_id}`,
     );

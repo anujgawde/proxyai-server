@@ -8,6 +8,7 @@ import { QAEntry, QAStatus } from 'src/entities/qa-entry.entity';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { TranscriptData } from 'src/entities/transcript-entry.entity';
+import { EmbeddingCacheService } from 'src/services/embedding-cache.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -44,6 +45,7 @@ export class RAGService implements OnModuleInit {
   constructor(
     @InjectRepository(QAEntry)
     private readonly qaEntriesRepository: Repository<QAEntry>,
+    private readonly embeddingCache: EmbeddingCacheService,
   ) {
     this.qdrantClient = new QdrantClient({
       url: process.env.QDRANT_URL,
@@ -67,7 +69,7 @@ export class RAGService implements OnModuleInit {
         'feature-extraction',
         this.embeddingModel,
         {
-          quantized: false,
+          quantized: true,
           progress_callback: (progress) => {
             if (progress.status === 'downloading') {
               this.logger.log(
@@ -155,6 +157,12 @@ export class RAGService implements OnModuleInit {
   private async generateEmbedding(text: string): Promise<number[]> {
     await this.waitForModelLoad();
 
+    // Check cache first
+    const cached = await this.embeddingCache.get(text);
+    if (cached) {
+      return cached;
+    }
+
     try {
       const output = await this.embeddingPipeline(text, {
         pooling: 'mean',
@@ -166,6 +174,9 @@ export class RAGService implements OnModuleInit {
       if (!Array.isArray(embedding) || embedding.length === 0) {
         throw new Error('Invalid embedding generated');
       }
+
+      // Cache the result
+      await this.embeddingCache.set(text, embedding);
 
       return embedding;
     } catch (error) {

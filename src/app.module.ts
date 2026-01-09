@@ -16,6 +16,7 @@ import { ProvidersModule } from './providers/providers.module';
 import { ScheduleModule } from '@nestjs/schedule';
 
 import { WebhookController } from './webhook/webhook.controller';
+import { JobProcessorService } from './services/job-processor.service';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { WebhookController } from './webhook/webhook.controller';
     ProvidersModule,
   ],
   controllers: [AppController, WebhookController],
-  providers: [AppService, TranscriptEntry, QAEntry, GeminiService],
+  providers: [AppService, TranscriptEntry, QAEntry, GeminiService, JobProcessorService],
+  exports: [JobProcessorService],
 })
 export class AppModule {}

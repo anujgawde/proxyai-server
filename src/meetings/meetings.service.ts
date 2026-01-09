@@ -85,6 +85,10 @@ export class MeetingsService {
 
   getUserMeetingStream(userId: string): Observable<any> {
     return new Observable((subscriber) => {
+      // SSE connection timeout (4 hours)
+      const CONNECTION_TIMEOUT = 4 * 60 * 60 * 1000;
+      let lastActivity = Date.now();
+
       // Send initial connection success message
       subscriber.next({
         data: JSON.stringify({
@@ -102,7 +106,19 @@ export class MeetingsService {
             timestamp: new Date().toISOString(),
           }),
         });
+        lastActivity = Date.now();
       }, 15000);
+
+      // Timeout check interval (every minute)
+      const timeoutCheckInterval = setInterval(() => {
+        const idleTime = Date.now() - lastActivity;
+        if (idleTime >= CONNECTION_TIMEOUT) {
+          this.logger.warn(
+            `SSE connection for user ${userId} timed out after ${CONNECTION_TIMEOUT}ms`,
+          );
+          subscriber.complete();
+        }
+      }, 60000);
 
       // Subscribe to meeting updates filtered for this specific user
       // const subscription = this.meetingEvents$
@@ -131,6 +147,7 @@ export class MeetingsService {
       // Cleanup on disconnect
       return () => {
         clearInterval(heartbeatInterval);
+        clearInterval(timeoutCheckInterval);
         subscription.unsubscribe();
       };
     });
@@ -270,39 +287,57 @@ export class MeetingsService {
    * Send a meeting bot state change to the user
    */
   async updateMeetingFromBotState(payload: BotWebhookDto) {
-    const { bot_id, data } = payload;
+    try {
+      const { bot_id, data } = payload;
 
-    const botData = data as any;
+      if (!bot_id || !data) {
+        this.logger.warn('Invalid bot state payload - missing bot_id or data');
+        return;
+      }
 
-    const meeting = await this.meetingsRepository.findOne({
-      where: { botId: bot_id, isDeleted: false },
-      relations: ['user'],
-    });
+      const botData = data as any;
 
-    if (!meeting) return;
+      if (!botData.new_state) {
+        this.logger.warn('Invalid bot state payload - missing new_state');
+        return;
+      }
 
-    const newStatus = this.BOT_STATE_TO_MEETING_STATUS[botData.new_state];
+      const meeting = await this.meetingsRepository.findOne({
+        where: { botId: bot_id, isDeleted: false },
+        relations: ['user'],
+      });
 
-    if (!newStatus || meeting.status === newStatus) {
-      return;
+      if (!meeting) {
+        this.logger.warn(`Meeting not found for bot_id: ${bot_id}`);
+        return;
+      }
+
+      const newStatus = this.BOT_STATE_TO_MEETING_STATUS[botData.new_state];
+
+      if (!newStatus || meeting.status === newStatus) {
+        return;
+      }
+
+      meeting.status = newStatus;
+      await this.meetingsRepository.save(meeting);
+
+      if (newStatus === MeetingStatus.PAST) {
+        await this.transcriptsService.flushAndClearMeeting(meeting.id);
+      }
+
+      this.meetingEvents$.next({
+        userId: meeting.userId,
+        type: 'meeting_status_update',
+        data: {
+          id: meeting.id,
+          status: meeting.status,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      this.logger.error('Error updating meeting from bot state:', error);
+      throw error; // Re-throw to be caught by controller
     }
-
-    meeting.status = newStatus;
-    await this.meetingsRepository.save(meeting);
-
-    if (newStatus === MeetingStatus.PAST) {
-      await this.transcriptsService.flushAndClearMeeting(meeting.id);
-    }
-
-    this.meetingEvents$.next({
-      userId: meeting.userId,
-      type: 'meeting_status_update',
-      data: {
-        id: meeting.id,
-        status: meeting.status,
-      },
-      timestamp: new Date().toISOString(),
-    });
   }
 
   //   export interface TranscriptData {
@@ -315,16 +350,29 @@ export class MeetingsService {
   //   transcription: { transcript: string; words: number };
   // }
   async handleTranscriptUpdate(payload: any): Promise<void> {
-    const { bot_id, data } = payload;
+    try {
+      const { bot_id, data } = payload;
 
-    const meeting = await this.meetingsRepository.findOne({
-      where: { botId: bot_id, isDeleted: false },
-      relations: ['user'],
-    });
+      if (!bot_id || !data) {
+        this.logger.warn('Invalid transcript update payload - missing bot_id or data');
+        return;
+      }
 
-    if (!meeting) return;
+      const meeting = await this.meetingsRepository.findOne({
+        where: { botId: bot_id, isDeleted: false },
+        relations: ['user'],
+      });
 
-    await this.transcriptsService.addTranscript(meeting, data);
+      if (!meeting) {
+        this.logger.warn(`Meeting not found for bot_id: ${bot_id}`);
+        return;
+      }
+
+      await this.transcriptsService.addTranscript(meeting, data);
+    } catch (error) {
+      this.logger.error('Error handling transcript update:', error);
+      throw error; // Re-throw to be caught by controller
+    }
   }
 
   // Private Methods:
