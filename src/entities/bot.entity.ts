@@ -1,5 +1,3 @@
-import { IsString, IsNotEmpty, IsIn, IsObject, IsOptional } from 'class-validator';
-
 export interface ScheduleBotParams {
   meetingUrl: string;
   startTime: Date;
@@ -52,60 +50,23 @@ export interface ScheduledBot {
 }
 
 export class BotStateTriggerData {
-  @IsString()
-  @IsNotEmpty()
   new_state: string;
-
-  @IsString()
-  @IsNotEmpty()
   old_state: string;
-
-  @IsString()
-  @IsNotEmpty()
   created_at: string;
-
-  @IsString()
-  @IsNotEmpty()
   event_type: string;
-
-  @IsString()
-  @IsNotEmpty()
   event_sub_type: string;
 }
 
-export class TranscriptUpdateTriggerData {
-  @IsOptional()
-  @IsObject()
-  data?: any;
-}
+export class TranscriptUpdateTriggerData {}
 
 export class BotWebhookDto {
-  @IsString()
-  @IsNotEmpty()
   idempotency_key: string;
-
-  @IsString()
-  @IsNotEmpty()
   bot_id: string;
-
-  @IsOptional()
-  @IsObject()
   bot_metadata: any;
-
-  @IsString()
-  @IsIn([
-    'bot.state_change',
-    'transcript.update',
-    'chat_messages.update',
-    'participant_events.join_leave',
-  ])
   trigger:
     | 'bot.state_change'
     | 'transcript.update'
     | 'chat_messages.update'
     | 'participant_events.join_leave';
-
-  @IsObject()
-  @IsNotEmpty()
   data: BotStateTriggerData | TranscriptUpdateTriggerData;
 }

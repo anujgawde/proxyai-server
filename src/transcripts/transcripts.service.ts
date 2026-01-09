@@ -2,7 +2,6 @@ import {
   Injectable,
   Logger,
   OnModuleDestroy,
-  OnModuleInit,
   Inject,
   forwardRef,
 } from '@nestjs/common';
@@ -18,7 +17,6 @@ import { GeminiService } from 'src/gemini/gemini.service';
 import { Summary } from 'src/entities/summary.entity';
 import { RAGService } from 'src/rag/rag.service';
 import { MeetingsService } from 'src/meetings/meetings.service';
-import { JobProcessorService, TranscriptJob } from 'src/services/job-processor.service';
 
 interface BufferMetadata {
   transcripts: TranscriptData[];
@@ -26,16 +24,11 @@ interface BufferMetadata {
 }
 
 @Injectable()
-export class TranscriptsService implements OnModuleInit, OnModuleDestroy {
+export class TranscriptsService implements OnModuleDestroy {
   private readonly logger = new Logger(TranscriptsService.name);
   private transcriptBuffer = new Map<number, BufferMetadata>();
   private flushIntervals = new Map<number, NodeJS.Timeout>();
   private readonly FLUSH_INTERVAL = 1 * 60 * 1000;
-
-  // Buffer limits for free tier optimization
-  private readonly MAX_BUFFER_SIZE = 200; // Maximum segments per buffer
-  private readonly MAX_BUFFER_AGE = 2 * 60 * 1000; // 2 minutes max buffer age
-  private readonly MAX_CONCURRENT_MEETINGS = 100; // Hard limit on concurrent meetings
 
   constructor(
     @InjectRepository(TranscriptEntry)
@@ -50,15 +43,7 @@ export class TranscriptsService implements OnModuleInit, OnModuleDestroy {
     private ragService: RAGService,
     @Inject(forwardRef(() => MeetingsService))
     private meetingsService: MeetingsService,
-    private jobProcessor: JobProcessorService,
   ) {}
-
-  async onModuleInit() {
-    this.logger.log('Registering transcript processor callback with JobProcessorService');
-    this.jobProcessor.setTranscriptProcessor(async (job: TranscriptJob) => {
-      await this.processBufferFlush(job);
-    });
-  }
 
   async addTranscript(meeting: Meeting, transcriptionData: any): Promise<void> {
     // Save individual segment to database immediately
@@ -90,14 +75,6 @@ export class TranscriptsService implements OnModuleInit, OnModuleDestroy {
 
     // Add to buffer for 1-minute grouping
     if (!this.transcriptBuffer.has(meeting.id)) {
-      // Enforce maximum concurrent meetings limit
-      if (this.transcriptBuffer.size >= this.MAX_CONCURRENT_MEETINGS) {
-        this.logger.warn(
-          `Maximum concurrent meetings limit (${this.MAX_CONCURRENT_MEETINGS}) reached. Cannot create buffer for meeting ${meeting.id}`,
-        );
-        return;
-      }
-
       this.logger.log(`Initializing new buffer for meeting ${meeting.id}`);
       this.transcriptBuffer.set(meeting.id, {
         transcripts: [],
@@ -108,39 +85,6 @@ export class TranscriptsService implements OnModuleInit, OnModuleDestroy {
 
     const bufferData = this.transcriptBuffer.get(meeting.id)!;
     const buffer = bufferData.transcripts;
-
-    // Check buffer size limit before adding
-    if (buffer.length >= this.MAX_BUFFER_SIZE) {
-      this.logger.warn(
-        `Buffer for meeting ${meeting.id} reached max size (${this.MAX_BUFFER_SIZE}). Flushing immediately.`,
-      );
-      await this.flushMeetingBuffer(meeting.id);
-      // Re-get buffer after flush
-      const newBufferData = this.transcriptBuffer.get(meeting.id);
-      if (!newBufferData) {
-        this.logger.error(
-          `Buffer for meeting ${meeting.id} not found after flush`,
-        );
-        return;
-      }
-    }
-
-    // Check buffer age and flush if too old
-    const bufferAge = Date.now() - new Date(bufferData.timeStart).getTime();
-    if (bufferAge >= this.MAX_BUFFER_AGE) {
-      this.logger.warn(
-        `Buffer for meeting ${meeting.id} exceeded max age (${this.MAX_BUFFER_AGE}ms). Flushing immediately.`,
-      );
-      await this.flushMeetingBuffer(meeting.id);
-      // Re-get buffer after flush
-      const newBufferData = this.transcriptBuffer.get(meeting.id);
-      if (!newBufferData) {
-        this.logger.error(
-          `Buffer for meeting ${meeting.id} not found after flush`,
-        );
-        return;
-      }
-    }
 
     // Add to buffer without merging (let RAG service handle grouping)
     buffer.push({
@@ -191,85 +135,18 @@ export class TranscriptsService implements OnModuleInit, OnModuleDestroy {
       const timeStart = bufferData.timeStart;
       const timeEnd = new Date().toISOString();
 
-      // Get segment IDs from the buffer
-      const segmentIds = transcriptsToProcess.map((t) => t.timestamp_ms);
-
-      // Reset buffer immediately (before enqueueing to allow new segments)
+      // Reset buffer immediately
       this.transcriptBuffer.set(meetingId, {
         transcripts: [],
         timeStart: timeEnd,
       });
-
-      // Enqueue job for async processing
-      await this.jobProcessor.addTranscriptProcessingJob({
-        meetingId: meetingId,
-        segmentIds: segmentIds,
-        timeStart: timeStart,
-        timeEnd: timeEnd,
-      });
-
-      this.logger.log(
-        `Enqueued processing job for ${transcriptsToProcess.length} transcript segments for meeting ${meetingId}`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `Error flushing transcripts for meeting ${meetingId}:`,
-        error,
-      );
-    }
-  }
-
-  /**
-   * Process transcript buffer flush job (called by JobProcessorService worker)
-   */
-  private async processBufferFlush(job: TranscriptJob): Promise<void> {
-    const { meetingId, timeStart, timeEnd } = job;
-
-    this.logger.log(
-      `Processing transcript flush job for meeting ${meetingId}`,
-    );
-
-    try {
-      const meeting = await this.meetingsService.getMeetingById(meetingId);
-      if (!meeting) {
-        this.logger.warn(`Meeting ${meetingId} not found during job processing`);
-        return;
-      }
-
-      // Fetch segments from database (they were already saved in addTranscript)
-      const segments = await this.transcriptSegmentRepository.find({
-        where: {
-          meetingId: meetingId,
-        },
-        order: {
-          timestampMs: 'ASC',
-        },
-      });
-
-      if (segments.length === 0) {
-        this.logger.warn(`No segments found for meeting ${meetingId}`);
-        return;
-      }
-
-      // Convert segments to TranscriptData format
-      const transcriptsToProcess: TranscriptData[] = segments.map((seg) => ({
-        speaker_name: seg.speakerName,
-        speaker_uuid: seg.speakerUuid,
-        speaker_user_uuid: seg.speakerUserUuid,
-        speaker_is_host: seg.speakerIsHost,
-        timestamp_ms: parseInt(seg.timestampMs),
-        duration_ms: seg.durationMs,
-        transcription: {
-          transcript: seg.transcript,
-          words: seg.words,
-        },
-      }));
 
       // Group transcripts by speaker for Qdrant (call RAG's chunking)
       const groupedChunks =
         this.ragService.chunkTranscriptsForContext(transcriptsToProcess);
 
       // Save grouped chunks to TranscriptEntry
+      // Store the same grouped structure that goes to Qdrant
       const transcriptEntry = this.transcriptRepository.create({
         transcripts: transcriptsToProcess,
         meetingId: meetingId,
@@ -279,7 +156,7 @@ export class TranscriptsService implements OnModuleInit, OnModuleDestroy {
       await this.transcriptRepository.save(transcriptEntry);
 
       this.logger.log(
-        `Saved ${transcriptsToProcess.length} transcript segments (${groupedChunks.length} grouped chunks) for meeting ${meetingId}`,
+        `Flushed ${transcriptsToProcess.length} transcript segments (${groupedChunks.length} grouped chunks) for meeting ${meetingId}`,
       );
 
       // Store grouped chunks in Qdrant vector database
@@ -296,13 +173,12 @@ export class TranscriptsService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Generate summary from buffer
-      await this.generateAndSaveSummary(meeting.id, transcriptsToProcess);
+      this.generateAndSaveSummary(meeting.id, transcriptsToProcess);
     } catch (error) {
       this.logger.error(
-        `Error processing transcript flush job for meeting ${meetingId}:`,
+        `Error flushing transcripts for meeting ${meetingId}:`,
         error,
       );
-      throw error; // Re-throw to trigger BullMQ retry
     }
   }
 

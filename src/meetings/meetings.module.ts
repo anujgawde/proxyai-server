@@ -17,8 +17,6 @@ import { MeetingsScheduler } from './meetings.scheduler';
 import { ProvidersZoomService } from 'src/providers/providers-zoom.service';
 import { ProvidersGoogleService } from 'src/providers/providers-google.service';
 import { Provider } from 'src/entities/providers.entity';
-import { JobProcessorService } from 'src/services/job-processor.service';
-import { EmbeddingCacheService } from 'src/services/embedding-cache.service';
 
 @Module({
   imports: [
@@ -43,8 +41,6 @@ import { EmbeddingCacheService } from 'src/services/embedding-cache.service';
     MeetingsScheduler,
     ProvidersZoomService,
     ProvidersGoogleService,
-    JobProcessorService,
-    EmbeddingCacheService,
   ],
   exports: [MeetingsService],
 })
