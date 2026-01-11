@@ -50,6 +50,16 @@ export class MeetingsController {
   }
 
   // API Routes to get history of transcripts, summaries and QnA
+  @Get(':id/transcripts')
+  @UseGuards(FirebaseAuthGuard)
+  async getMeetingTranscripts(
+    @Param('id') id: string,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 1,
+  ) {
+    return this.meetingsService.getMeetingTranscripts(id, page, limit);
+  }
+
   @Get(':id/summaries')
   @UseGuards(FirebaseAuthGuard)
   async getMeetingSummaries(
