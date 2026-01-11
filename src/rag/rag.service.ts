@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { GoogleGenAI } from '@google/genai';
-import { pipeline, env } from '@xenova/transformers';
+import axios, { AxiosInstance } from 'axios';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { QAEntry, QAStatus } from 'src/entities/qa-entry.entity';
@@ -11,35 +11,20 @@ import { TranscriptData } from 'src/entities/transcript-entry.entity';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Configure transformers.js
-env.allowRemoteModels = true;
-env.allowLocalModels = true;
-
-interface SearchResult {
-  content: string;
-  score: number;
-  startTime: string;
-  endTime: string;
-  chunkId: string;
-  speaker: string;
-  segmentCount: number;
-}
-
-interface RAGAnswer {
-  answer: string;
-  sources: string[];
-  // relevantChunks: SearchResult[];
-}
+// // Configure transformers.js
+// env.allowRemoteModels = true;
+// env.allowLocalModels = true;
 
 @Injectable()
 export class RAGService implements OnModuleInit {
   private readonly logger = new Logger(RAGService.name);
   private qdrantClient: QdrantClient;
   private genAI: GoogleGenAI;
-  private embeddingPipeline: any;
   private readonly collectionName = 'meeting_transcripts';
-  private readonly embeddingModel = 'Xenova/all-MiniLM-L6-v2';
-  private isEmbeddingModelLoaded = false;
+  private readonly hfApiToken: string;
+  private readonly hfApiUrl: string;
+  private readonly hfEmbeddingModel: string;
+  private readonly axiosInstance: AxiosInstance;
 
   constructor(
     @InjectRepository(QAEntry)
@@ -53,36 +38,32 @@ export class RAGService implements OnModuleInit {
     this.genAI = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
     });
+
+    // Initialize HF API configuration
+    const apiToken = process.env.HUGGINGFACE_API_TOKEN;
+    if (!apiToken) {
+      throw new Error('HUGGINGFACE_API_TOKEN environment variable is required');
+    }
+
+    this.hfApiToken = apiToken;
+    this.hfApiUrl = process.env.HUGGINGFACE_API_URL ||
+                    'https://api-inference.huggingface.co';
+    this.hfEmbeddingModel = process.env.HUGGINGFACE_EMBEDDING_MODEL ||
+                            'sentence-transformers/all-MiniLM-L6-v2';
+
+    // Initialize axios instance with defaults
+    this.axiosInstance = axios.create({
+      baseURL: this.hfApiUrl,
+      timeout: 30000, // 30 second timeout
+      headers: {
+        'Authorization': `Bearer ${this.hfApiToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
   }
 
   async onModuleInit() {
-    await this.initializeEmbeddingModel();
     await this.initializeCollection();
-  }
-
-  private async initializeEmbeddingModel() {
-    try {
-      this.logger.log('Loading local embedding model...');
-      this.embeddingPipeline = await pipeline(
-        'feature-extraction',
-        this.embeddingModel,
-        {
-          quantized: false,
-          progress_callback: (progress) => {
-            if (progress.status === 'downloading') {
-              this.logger.log(
-                `Downloading model: ${Math.round((progress.loaded / progress.total) * 100)}%`,
-              );
-            }
-          },
-        },
-      );
-      this.isEmbeddingModelLoaded = true;
-      this.logger.log('Local embedding model initialized successfully');
-    } catch (error) {
-      this.logger.error('Error initializing embedding model:', error);
-      throw new Error('Failed to initialize local embedding model');
-    }
   }
 
   private async initializeCollection() {
@@ -146,25 +127,97 @@ export class RAGService implements OnModuleInit {
     }
   }
 
-  private async waitForModelLoad(): Promise<void> {
-    while (!this.isEmbeddingModelLoaded) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+  /**
+   * Check if error is retryable
+   */
+  private isRetryableError(error: any): boolean {
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status;
+      return status === 429 || // Rate limit
+             status === 503 || // Service unavailable
+             !error.response || // Network error
+             error.code === 'ECONNRESET' ||
+             error.code === 'ETIMEDOUT';
+    }
+    return false;
+  }
+
+  /**
+   * Call HF API with exponential backoff retry logic
+   */
+  private async callHFInferenceWithRetry<T>(
+    fn: () => Promise<T>,
+    maxRetries: number = 5,
+    attempt: number = 1
+  ): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      const shouldRetry = this.isRetryableError(error);
+
+      if (!shouldRetry || attempt >= maxRetries) {
+        this.logger.error(
+          `HF API request failed after ${attempt} attempts:`,
+          error.response?.data || error.message
+        );
+        throw new Error(
+          `Failed to generate embeddings: ${error.response?.data?.error || error.message}`
+        );
+      }
+
+      // Exponential backoff with jitter
+      const baseDelay = Math.min(1000 * Math.pow(2, attempt - 1), 32000);
+      const jitter = Math.random() * 1000;
+      const delay = baseDelay + jitter;
+
+      this.logger.warn(
+        `HF API request failed (attempt ${attempt}/${maxRetries}), ` +
+        `retrying in ${Math.round(delay)}ms: ${error.message}`
+      );
+
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return this.callHFInferenceWithRetry(fn, maxRetries, attempt + 1);
     }
   }
 
+  /**
+   * Call Hugging Face Inference API for embeddings
+   */
+  private async callHFEmbeddingAPI(inputs: string | string[]): Promise<number[] | number[][]> {
+    return this.callHFInferenceWithRetry(async () => {
+      const response = await this.axiosInstance.post(
+        `/models/${this.hfEmbeddingModel}`,
+        {
+          inputs,
+          options: {
+            wait_for_model: true,
+            use_cache: true,
+          },
+        }
+      );
+
+      return response.data;
+    });
+  }
+
   private async generateEmbedding(text: string): Promise<number[]> {
-    await this.waitForModelLoad();
-
     try {
-      const output = await this.embeddingPipeline(text, {
-        pooling: 'mean',
-        normalize: true,
-      });
+      // Validate input
+      if (!text || typeof text !== 'string' || text.trim().length === 0) {
+        throw new Error('Invalid input text for embedding generation');
+      }
 
-      const embedding = Array.from(output.data) as number[];
+      this.logger.debug(`Generating embedding for text: ${text.substring(0, 50)}...`);
 
-      if (!Array.isArray(embedding) || embedding.length === 0) {
-        throw new Error('Invalid embedding generated');
+      // Call HF API
+      const embedding = await this.callHFEmbeddingAPI(text) as number[];
+
+      // Validate output
+      if (!Array.isArray(embedding) || embedding.length !== 384) {
+        this.logger.error(
+          `Invalid embedding dimensions: expected 384, got ${embedding?.length || 'undefined'}`
+        );
+        throw new Error('Invalid embedding generated: incorrect dimensions');
       }
 
       return embedding;
@@ -175,24 +228,52 @@ export class RAGService implements OnModuleInit {
   }
 
   private async generateEmbeddings(texts: string[]): Promise<number[][]> {
-    await this.waitForModelLoad();
+    try {
+      // Validate input
+      if (!Array.isArray(texts) || texts.length === 0) {
+        throw new Error('Invalid input: texts must be a non-empty array');
+      }
 
-    const embeddings: number[][] = [];
-    const batchSize = 10;
+      this.logger.log(`Generating embeddings for ${texts.length} texts using HF API...`);
 
-    this.logger.log(`Generating embeddings for ${texts.length} texts...`);
+      const embeddings: number[][] = [];
+      const batchSize = 10; // Process in batches to avoid API limits
 
-    for (let i = 0; i < texts.length; i += batchSize) {
-      const batch = texts.slice(i, i + batchSize);
-      const batchPromises = batch.map((text) => this.generateEmbedding(text));
-      const batchEmbeddings = await Promise.all(batchPromises);
-      embeddings.push(...batchEmbeddings);
+      for (let i = 0; i < texts.length; i += batchSize) {
+        const batch = texts.slice(i, i + batchSize);
 
-      const processed = Math.min(i + batchSize, texts.length);
-      this.logger.log(`Generated embeddings: ${processed}/${texts.length}`);
+        this.logger.debug(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(texts.length / batchSize)}`);
+
+        // HF API supports batch processing natively
+        const batchEmbeddings = await this.callHFEmbeddingAPI(batch) as number[][];
+
+        // Validate batch results
+        if (!Array.isArray(batchEmbeddings) || batchEmbeddings.length !== batch.length) {
+          throw new Error(
+            `Invalid batch response: expected ${batch.length} embeddings, got ${batchEmbeddings?.length || 'undefined'}`
+          );
+        }
+
+        // Validate each embedding dimension
+        for (let j = 0; j < batchEmbeddings.length; j++) {
+          if (!Array.isArray(batchEmbeddings[j]) || batchEmbeddings[j].length !== 384) {
+            throw new Error(
+              `Invalid embedding at batch index ${j}: expected 384 dimensions, got ${batchEmbeddings[j]?.length || 'undefined'}`
+            );
+          }
+        }
+
+        embeddings.push(...batchEmbeddings);
+
+        const processed = Math.min(i + batchSize, texts.length);
+        this.logger.log(`Generated embeddings: ${processed}/${texts.length}`);
+      }
+
+      return embeddings;
+    } catch (error) {
+      this.logger.error('Error generating embeddings batch:', error);
+      throw new Error(`Failed to generate embeddings batch: ${error.message}`);
     }
-
-    return embeddings;
   }
 
   private createContentHash(content: string, timestamp: number): string {
