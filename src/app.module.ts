@@ -22,6 +22,11 @@ import { WebhookController } from './webhook/webhook.controller';
     ScheduleModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath:
+        process.env.NODE_ENV === 'production'
+          ? []
+          : [`.env.${process.env.NODE_ENV}.local`, '.env'],
+      ignoreEnvFile: process.env.NODE_ENV === 'production',
       load: [databaseConfig, firebaseConfig],
     }),
     TypeOrmModule.forRootAsync({
