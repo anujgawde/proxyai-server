@@ -20,6 +20,12 @@ export enum MeetingProvider {
   TEAMS = 'teams',
 }
 
+export enum CalendarProvider {
+  GOOGLE = 'google',
+  ZOOM = 'zoom',
+  MICROSOFT = 'microsoft',
+}
+
 export enum MeetingStatus {
   SCHEDULED = 'scheduled',
   LIVE = 'live',
@@ -63,10 +69,17 @@ export class Meeting {
 
   @Column({
     type: 'enum',
-    enum: MeetingProvider,
-    name: 'provider',
+    enum: CalendarProvider,
+    name: 'calendar_provider',
   })
-  provider: MeetingProvider;
+  calendarProvider: CalendarProvider;
+
+  @Column({
+    type: 'enum',
+    enum: MeetingProvider,
+    name: 'meeting_provider',
+  })
+  meetingProvider: MeetingProvider;
 
   @Column('varchar', { length: 255, nullable: true, name: 'organizer_id' })
   organizerId: string;

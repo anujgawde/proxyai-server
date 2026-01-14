@@ -5,7 +5,9 @@ import {
   Meeting,
   MeetingProvider,
   MeetingStatus,
+  CalendarProvider,
 } from 'src/entities/meeting.entity';
+import { MeetingPlatformDetector } from './meeting-platform.util';
 import { User } from 'src/entities/user.entity';
 import { TranscriptEntry } from 'src/entities/transcript-entry.entity';
 import { TranscriptSegment } from 'src/entities/transcript-segment.entity';
@@ -104,24 +106,6 @@ export class MeetingsService {
         });
       }, 15000);
 
-      // Subscribe to meeting updates filtered for this specific user
-      // const subscription = this.meetingEvents$
-      //   .pipe(
-      //     filter(
-      //       (event) =>
-      //         event.userId === userId && event.type === 'meeting_status_update',
-      //     ),
-      //   )
-      //   .subscribe((event) => {
-      //     subscriber.next({
-      //       data: JSON.stringify({
-      //         type: event.type,
-      //         data: event.data,
-      //         timestamp: event.timestamp,
-      //       }),
-      //     });
-      //   });
-
       const subscription = merge(
         this.meetingEvents$.pipe(filter((e) => e.userId === userId)),
         this.transcriptEvents$.pipe(filter((e) => e.userId === userId)),
@@ -219,31 +203,33 @@ export class MeetingsService {
     firebaseUid: string,
     tokens: {
       zoomAccessToken?: string;
-      googleMeetAccessToken?: string;
-      teamsAccessToken?: string;
+      googleAccessToken?: string;
+      microsoftAccessToken?: string;
     },
   ) {
     const results: Record<string, any> = {};
 
+    if (tokens.googleAccessToken) {
+      results.google = await this.syncGoogleCalendar(
+        firebaseUid,
+        tokens.googleAccessToken,
+      );
+    }
+
     if (tokens.zoomAccessToken) {
-      results.zoom = await this.syncZoomMeetings(
-        firebaseUid,
-        tokens.zoomAccessToken,
-      );
+      results.zoom = {
+        synced: 0,
+        message:
+          'ProxyAI does not support Zoom Calendar yet - use Google Calendar to sync Zoom meetings',
+      };
     }
 
-    if (tokens.googleMeetAccessToken) {
-      results.googleMeet = await this.syncGoogleMeetMeetings(
-        firebaseUid,
-        tokens.googleMeetAccessToken,
-      );
-    }
-
-    if (tokens.teamsAccessToken) {
-      results.teams = await this.syncTeamsMeetings(
-        firebaseUid,
-        tokens.teamsAccessToken,
-      );
+    if (tokens.microsoftAccessToken) {
+      results.microsoft = {
+        synced: 0,
+        message:
+          'ProxyAI does not support Microsoft Calendar yet - use Google Calendar to sync Teams meetings',
+      };
     }
 
     return results;
@@ -329,74 +315,8 @@ export class MeetingsService {
 
   // Private Methods:
 
-  // Sync Zoom Meetings
-  private async syncZoomMeetings(firebaseUid: string, accessToken: string) {
-    let meetings: any[] = [];
-    let synced = 0;
-
-    try {
-      const meetingsRes = await axios.get(
-        'https://api.zoom.us/v2/users/me/upcoming_meetings',
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          params: { page_size: 100 },
-        },
-      );
-
-      meetings = meetingsRes.data.meetings ?? [];
-    } catch (err) {
-      console.error(
-        'Error fetching Zoom upcoming meetings:',
-        err.response?.data || err.message || err,
-      );
-      return { synced, error: 'Failed to fetch Zoom upcoming meetings' };
-    }
-
-    for (const meeting of meetings) {
-      try {
-        const startTime = new Date(meeting.start_time);
-
-        const exists = await this.meetingsRepository.findOne({
-          where: {
-            meetingUrl: meeting.join_url,
-            userId: firebaseUid,
-            isDeleted: false,
-            status: meeting.status,
-          },
-        });
-
-        if (exists) continue;
-
-        const createdMeeting = this.meetingsRepository.create({
-          title: meeting.topic,
-          description: meeting.agenda ?? null,
-          startTime,
-          endTime: meeting.end_time ?? null,
-          timezone: meeting.timezone,
-          duration: meeting.duration,
-          status: MeetingStatus.SCHEDULED,
-          meetingUrl: meeting.join_url,
-          provider: MeetingProvider.ZOOM,
-          userId: firebaseUid,
-          providerMetadata: { meeting },
-        });
-
-        await this.meetingsRepository.save(createdMeeting);
-        synced++;
-      } catch (err) {
-        console.error(`Error processing meeting ${meeting.id}:`, err);
-        continue;
-      }
-    }
-
-    return { synced };
-  }
-
-  // Sync Google Meet Meetings
-  private async syncGoogleMeetMeetings(
-    firebaseUid: string,
-    accessToken: string,
-  ) {
+  // Sync Google Calendar - detects and syncs all meeting types
+  private async syncGoogleCalendar(firebaseUid: string, accessToken: string) {
     let events: any[] = [];
     let synced = 0;
 
@@ -423,19 +343,33 @@ export class MeetingsService {
         'Error fetching Google Calendar events:',
         err?.response?.data || err?.message || err,
       );
-      return { synced, error: 'Failed to fetch Google Meet meetings' };
+      return { synced, error: 'Failed to fetch Google Calendar events' };
     }
 
     for (const event of events) {
       try {
-        // Meet link can appear in multiple places
-        const meetLink =
-          event.hangoutLink ||
-          event.conferenceData?.entryPoints?.find(
-            (e: any) => e.entryPointType === 'video',
-          )?.uri;
+        // Extract meeting URL from various sources
+        const meetingUrl = this.extractMeetingUrl(event);
 
-        if (!meetLink) continue; // not a Meet meeting
+        if (!meetingUrl) continue; // No meeting link found
+
+        // Detect meeting platform from URL
+        const meetingProvider =
+          MeetingPlatformDetector.detectPlatform(meetingUrl);
+
+        // Currently Supporting only Google Meet.
+        // Todo: Exchange below 'if block' with commented out 'if block'
+        if (meetingProvider !== 'google_meet') {
+          continue;
+        }
+
+        // Todo: Exchange with above block
+        // if (!meetingProvider) {
+        //   this.logger.warn(
+        //     `Unsupported meeting platform for URL: ${meetingUrl}`,
+        //   );
+        //   continue;
+        // }
 
         const startTime = event.start?.dateTime
           ? new Date(event.start.dateTime)
@@ -449,7 +383,7 @@ export class MeetingsService {
 
         const exists = await this.meetingsRepository.findOne({
           where: {
-            meetingUrl: meetLink,
+            meetingUrl: meetingUrl,
             userId: firebaseUid,
             isDeleted: false,
           },
@@ -457,14 +391,15 @@ export class MeetingsService {
 
         if (exists) continue;
 
+        // Schedule bot for all meeting types
         const meetingBot: ScheduledBot | undefined =
           await this.scheduleMeetingBot({
-            meetingUrl: meetLink,
+            meetingUrl: meetingUrl,
             startTime: startTime,
           });
 
         const createdMeeting = this.meetingsRepository.create({
-          title: event.summary ?? 'Untitled Google Meet',
+          title: event.summary ?? 'Untitled Meeting',
           description: event.description ?? null,
           startTime,
           timezone: event.start?.timeZone ?? null,
@@ -473,8 +408,9 @@ export class MeetingsService {
               ? Math.round((endTime.getTime() - startTime.getTime()) / 60000)
               : 60,
           status: MeetingStatus.SCHEDULED,
-          meetingUrl: meetLink,
-          provider: MeetingProvider.GOOGLE_MEET,
+          meetingUrl: meetingUrl,
+          calendarProvider: CalendarProvider.GOOGLE,
+          meetingProvider: meetingProvider,
           userId: firebaseUid,
           providerMetadata: { event },
           botId: meetingBot?.id ?? '',
@@ -489,6 +425,53 @@ export class MeetingsService {
     }
 
     return { synced };
+  }
+
+  /**
+   * Extract meeting URL from Google Calendar event
+   */
+  private extractMeetingUrl(event: any): string | null {
+    // Check hangoutLink (Google Meet)
+    if (event.hangoutLink) {
+      return event.hangoutLink;
+    }
+
+    // Check conferenceData (all platforms)
+    const conferenceEntry = event.conferenceData?.entryPoints?.find(
+      (e: any) => e.entryPointType === 'video',
+    );
+    if (conferenceEntry?.uri) {
+      return conferenceEntry.uri;
+    }
+
+    // Check description for meeting links
+    if (event.description) {
+      // Look for Zoom links
+      const zoomMatch = event.description.match(
+        /https?:\/\/[^\s]*zoom\.us\/[^\s]*/i,
+      );
+      if (zoomMatch) return zoomMatch[0];
+
+      // Look for Teams links
+      const teamsMatch = event.description.match(
+        /https?:\/\/[^\s]*teams\.(microsoft|live)\.com\/[^\s]*/i,
+      );
+      if (teamsMatch) return teamsMatch[0];
+
+      // Look for Google Meet links
+      const meetMatch = event.description.match(
+        /https?:\/\/meet\.google\.com\/[^\s]*/i,
+      );
+      if (meetMatch) return meetMatch[0];
+    }
+
+    // Check location field
+    if (event.location) {
+      const urlMatch = event.location.match(/https?:\/\/[^\s]+/i);
+      if (urlMatch) return urlMatch[0];
+    }
+
+    return null;
   }
 
   private async scheduleMeetingBot(params: ScheduleBotParams) {
@@ -520,76 +503,6 @@ export class MeetingsService {
     }
   }
 
-  // Sync Teams Meetings
-  private async syncTeamsMeetings(_firebaseUid: string, _accessToken: string) {
-    return { synced: 0 };
-  }
-
-  /* ---------------------------------------------------- */
-  /* Temporarily Removed Methods Seperated                */
-  /* ---------------------------------------------------- */
-
-  /**
-   * Get paginated transcripts for a meeting
-   */
-  async getMeetingTranscripts(
-    meetingId: string,
-    page: number = 1,
-    limit: number = 50,
-  ) {
-    // Validate meeting exists
-    // const meeting = await this.meetingsRepository.findOne({
-    //   where: { id: meetingId },
-    // });
-    // if (!meeting) {
-    //   throw new NotFoundException('Meeting not found');
-    // }
-    // // Pagination Calculation
-    // const skip = (page - 1) * limit;
-    // // Paginated transcript entries
-    // const [transcriptEntries, totalEntries] =
-    //   await this.transcriptsRepository.findAndCount({
-    //     where: { meetingId },
-    //     order: { timeStart: 'DESC' },
-    //     skip,
-    //     take: limit,
-    //   });
-    // // Flatten transcript segments from entries
-    // const allSegments = transcriptEntries.flatMap((entry) =>
-    //   entry.transcripts.map((segment) => ({
-    //     ...segment,
-    //     entryId: entry.id,
-    //     batchTimeStart: entry.timeStart,
-    //     batchTimeEnd: entry.timeEnd,
-    //   })),
-    // );
-    // // Sorting (Newest First)
-    // const transcripts = allSegments.sort((a, b) => {
-    //   return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-    // });
-    // // Todo: Get only count instead of all transcripts
-    // // Calculate total segments across all entries
-    // const allEntries = await this.transcriptsRepository.find({
-    //   where: { meetingId },
-    //   select: ['transcripts'],
-    // });
-    // const totalSegments = allEntries.reduce(
-    //   (sum, entry) => sum + entry.transcripts.length,
-    //   0,
-    // );
-    // return {
-    //   data: transcripts,
-    //   pagination: {
-    //     page,
-    //     limit,
-    //     totalEntries, // Total transcript entries (batches)
-    //     totalSegments, // Total individual transcript segments
-    //     totalPages: Math.ceil(totalEntries / limit),
-    //     hasMore: skip + limit < totalEntries,
-    //   },
-    // };
-  }
-
   async getMeetingSummaries(
     meetingId: string,
     page: number = 1,
@@ -618,14 +531,6 @@ export class MeetingsService {
         hasMore: skip + limit < totalSummaries,
       },
     };
-  }
-
-  async getLatestSummary(meetingId: number) {
-    const summary = await this.summariesRepository.findOne({
-      where: { meetingId },
-      order: { createdAt: 'DESC' },
-    });
-    return summary;
   }
 
   async getTranscriptSegments(
@@ -742,5 +647,30 @@ export class MeetingsService {
 
     // Call RAG service
     return this.ragService.askQuestion(meetingId, userId, question);
+  }
+
+  /* ---------------------------------------------------- */
+  /* Services yet to implement                            */
+  /* ---------------------------------------------------- */
+
+  // Sync Microsoft Calendar - Not implemented (use Google Calendar to sync Teams meetings)
+  private async syncMicrosoftCalendar(
+    _firebaseUid: string,
+    _accessToken: string,
+  ) {
+    return {
+      synced: 0,
+      message:
+        'ProxyAI does not support Microsoft Calendar yet - use Google Calendar to sync Teams meetings',
+    };
+  }
+
+  // Sync Zoom Calendar - Not implemented (use Google Calendar to sync Zoom meetings)
+  private async syncZoomCalendar(_firebaseUid: string, _accessToken: string) {
+    return {
+      synced: 0,
+      message:
+        'ProxyAI does not support Zoom Calendar yet - use Google Calendar to sync Zoom meetings',
+    };
   }
 }

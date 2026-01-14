@@ -20,7 +20,7 @@ export class MeetingsScheduler {
   ) {}
 
   // Cron Job that runs every night at 1 AM. Enable the appmodule import to make this active.
-  @Cron('0 1 * * *')
+  @Cron('* 1 * * *')
   async syncMeetingsCron() {
     this.logger.log('Starting syncMeetingsCron');
 
@@ -47,13 +47,13 @@ export class MeetingsScheduler {
 
       lastId = providers[providers.length - 1].id;
 
-      // User -> User approved meeting providers
+      // User -> User approved calendar providers
       const userTokenMap = new Map<
         string,
         {
           zoomAccessToken?: string;
-          googleMeetAccessToken?: string;
-          teamsAccessToken?: string;
+          googleAccessToken?: string;
+          microsoftAccessToken?: string;
         }
       >();
 
@@ -73,7 +73,7 @@ export class MeetingsScheduler {
             //   userTokenMap.get(provider.userId)!.zoomAccessToken = accessToken;
             // }
 
-            if (provider.providerName === 'google_meet') {
+            if (provider.providerName === 'google') {
               const { access_token } =
                 await this.providersGoogleService.refreshGoogleToken(
                   provider.refreshToken,
@@ -83,7 +83,7 @@ export class MeetingsScheduler {
                 userTokenMap.set(provider.userId, {});
               }
 
-              userTokenMap.get(provider.userId)!.googleMeetAccessToken =
+              userTokenMap.get(provider.userId)!.googleAccessToken =
                 access_token;
             }
           } catch (err) {
@@ -95,9 +95,13 @@ export class MeetingsScheduler {
         }),
       );
 
-      // Sync meetinngs for all providers for each user
+      // Sync meetings for all providers for each user
       for (const [firebaseUid, tokens] of userTokenMap.entries()) {
-        if (!tokens.zoomAccessToken && !tokens.googleMeetAccessToken) {
+        if (
+          !tokens.zoomAccessToken &&
+          !tokens.googleAccessToken &&
+          !tokens.microsoftAccessToken
+        ) {
           continue;
         }
 
@@ -133,11 +137,11 @@ export class MeetingsScheduler {
     }
 
     if (tokens.googleMeetAccessToken) {
-      providersToUpdate.push(ProviderOptions.google_meet);
+      providersToUpdate.push(ProviderOptions.google);
     }
 
     if (tokens.teamsAccessToken) {
-      providersToUpdate.push(ProviderOptions.teams);
+      providersToUpdate.push(ProviderOptions.microsoft);
     }
 
     if (providersToUpdate.length === 0) {

@@ -45,7 +45,7 @@ export class ProvidersGoogleService {
       await this.providersRepository.upsert(
         {
           userId,
-          providerName: ProviderOptions.google_meet,
+          providerName: ProviderOptions.google,
           refreshToken: refresh_token,
           lastSyncedAt: null,
           isConnected: true,

@@ -9,8 +9,8 @@ import {
 
 export enum ProviderOptions {
   'zoom' = 'zoom',
-  'google_meet' = 'google_meet',
-  'teams' = 'teams',
+  'google' = 'google',
+  'microsoft' = 'microsoft',
 }
 @Entity('providers')
 @Unique(['userId', 'providerName'])

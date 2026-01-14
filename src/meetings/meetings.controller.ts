@@ -44,22 +44,12 @@ export class MeetingsController {
   ) {
     return this.meetingsService.syncMeetings(user.uid, {
       zoomAccessToken: headers['x-zoom-access-token'],
-      googleMeetAccessToken: headers['x-google_meet-access-token'],
-      teamsAccessToken: headers['x-teams-access-token'],
+      googleAccessToken: headers['x-google-access-token'],
+      microsoftAccessToken: headers['x-microsoft-access-token'],
     });
   }
 
   // API Routes to get history of transcripts, summaries and QnA
-  @Get(':id/transcripts')
-  @UseGuards(FirebaseAuthGuard)
-  async getMeetingTranscripts(
-    @Param('id') id: string,
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 1,
-  ) {
-    return this.meetingsService.getMeetingTranscripts(id, page, limit);
-  }
-
   @Get(':id/summaries')
   @UseGuards(FirebaseAuthGuard)
   async getMeetingSummaries(

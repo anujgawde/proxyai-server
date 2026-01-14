@@ -24,7 +24,7 @@ export class ProvidersController {
   ) {}
 
   @Post('/callback')
-  async zoomCallback(
+  async providerCallback(
     @CurrentUser() user: DecodedIdToken,
     @Body('code') code: string,
     @Body('provider') provider: string,
@@ -32,10 +32,17 @@ export class ProvidersController {
     if (!user.uid) {
       throw new Error('User not authenticated');
     }
-    if (provider === 'google_meet') {
+    if (provider === 'google') {
       return this.googleService.handleOAuth(code, user.uid);
     } else if (provider === 'zoom') {
-      return this.zoomService.handleOAuth(code, user.uid);
+      throw new Error(
+        'ProxyAI does not support Zoom Calendar yet - use Google Calendar to sync Zoom meetings',
+      );
+      // return this.zoomService.handleOAuth(code, user.uid);
+    } else if (provider === 'microsoft') {
+      throw new Error(
+        'ProxyAI does not support Microsoft Calendar yet - use Google Calendar to sync Teams meetings',
+      );
     }
   }
 
