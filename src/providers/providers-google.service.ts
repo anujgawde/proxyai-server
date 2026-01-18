@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import axios from 'axios';
 import { Provider, ProviderOptions } from 'src/entities/providers.entity';
 import { Repository } from 'typeorm';
+import { CalendarWatchService } from './calendar-watch.service';
 
 @Injectable()
 export class ProvidersGoogleService {
@@ -11,6 +12,8 @@ export class ProvidersGoogleService {
   constructor(
     @InjectRepository(Provider)
     private providersRepository: Repository<Provider>,
+    @Inject(forwardRef(() => CalendarWatchService))
+    private calendarWatchService: CalendarWatchService,
   ) {}
 
   async handleOAuth(code: string, userId: string) {
@@ -56,6 +59,22 @@ export class ProvidersGoogleService {
       this.logger.log(
         `Google OAuth successful. Refresh token stored for userId=${userId}`,
       );
+
+      // Sync today's meetings immediately so user has access right away
+      this.calendarWatchService.syncTodaysMeetings(userId).catch((err) => {
+        this.logger.error(
+          `Failed to sync today's meetings for userId=${userId}`,
+          err,
+        );
+      });
+
+      // Setup calendar watch for real-time sync (runs in background)
+      this.calendarWatchService.setupWatch(userId).catch((err) => {
+        this.logger.error(
+          `Failed to setup calendar watch for userId=${userId}`,
+          err,
+        );
+      });
 
       return {
         accessToken: access_token,

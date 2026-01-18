@@ -16,7 +16,9 @@ import { QAEntry } from 'src/entities/qa-entry.entity';
 import { MeetingsScheduler } from './meetings.scheduler';
 import { ProvidersZoomService } from 'src/providers/providers-zoom.service';
 import { ProvidersGoogleService } from 'src/providers/providers-google.service';
+import { CalendarWatchService } from 'src/providers/calendar-watch.service';
 import { Provider } from 'src/entities/providers.entity';
+import { RAGModule } from 'src/rag/rag.module';
 
 @Module({
   imports: [
@@ -29,6 +31,7 @@ import { Provider } from 'src/entities/providers.entity';
       QAEntry,
       Provider,
     ]),
+    RAGModule,
   ],
   controllers: [MeetingsController],
   providers: [
@@ -37,10 +40,10 @@ import { Provider } from 'src/entities/providers.entity';
     FirebaseAuthGuard,
     TranscriptsService,
     GeminiService,
-    RAGService,
     MeetingsScheduler,
     ProvidersZoomService,
     ProvidersGoogleService,
+    CalendarWatchService,
   ],
   exports: [MeetingsService],
 })

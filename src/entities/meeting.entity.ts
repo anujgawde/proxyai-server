@@ -7,6 +7,7 @@ import {
   OneToMany,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { TranscriptEntry } from './transcript-entry.entity';
 import { TranscriptSegment } from './transcript-segment.entity';
@@ -101,6 +102,10 @@ export class Meeting {
 
   @Column('varchar', { name: 'user_id' })
   userId: string;
+
+  @Column('varchar', { nullable: true, name: 'calendar_event_id' })
+  @Index()
+  calendarEventId: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
