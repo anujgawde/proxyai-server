@@ -5,6 +5,7 @@ import {
   UseGuards,
   Patch,
   Param,
+  Get,
 } from '@nestjs/common';
 import { ProvidersZoomService } from './providers-zoom.service';
 import { CurrentUser } from 'src/auth/decorators/current-user.decorator';
@@ -22,6 +23,11 @@ export class ProvidersController {
     private readonly zoomService: ProvidersZoomService,
     private readonly googleService: ProvidersGoogleService,
   ) {}
+
+  @Get('/status')
+  async getProviderStatus(@CurrentUser() user: DecodedIdToken) {
+    return this.providersService.getConnectionStatus(user.uid);
+  }
 
   @Post('/callback')
   async providerCallback(

@@ -35,7 +35,7 @@ export class ProvidersGoogleService {
           headers: { 'Content-Type': 'application/json' },
         },
       );
-      const { access_token, refresh_token } = tokenRes.data;
+      const { refresh_token } = tokenRes.data;
 
       if (!refresh_token) {
         this.logger.error(
@@ -77,7 +77,8 @@ export class ProvidersGoogleService {
       });
 
       return {
-        accessToken: access_token,
+        success: true,
+        provider: 'google',
       };
     } catch (err: any) {
       this.logger.error('Google OAuth token exchange failed');
