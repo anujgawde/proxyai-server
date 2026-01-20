@@ -41,9 +41,18 @@ import { WebhookModule } from './webhook/webhook.module';
           rejectUnauthorized: false, // Self-signed certificates
         },
 
-        // Todo: Switch commented lines in production
-        // synchronize: configService.get('NODE_ENV') === 'development',
-        // logging: configService.get('NODE_ENV') === 'development',
+        // Connection pool configuration
+        extra: {
+          // Maximum number of connections in the pool
+          max: 50,
+          // Minimum number of connections to maintain
+          min: 5,
+          // Maximum time to wait for a connection: 5 seconds
+          connectionTimeoutMillis: 5000,
+          // How long a connection can be idle before being closed: 30 seconds
+          idleTimeoutMillis: 30000,
+          allowExitOnIdle: true,
+        },
 
         synchronize: false,
         logging: false,

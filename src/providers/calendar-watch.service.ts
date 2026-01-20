@@ -4,7 +4,11 @@ import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
 
-import { Provider, ProviderOptions, WatchStatus } from 'src/entities/providers.entity';
+import {
+  Provider,
+  ProviderOptions,
+  WatchStatus,
+} from 'src/entities/providers.entity';
 import {
   Meeting,
   MeetingStatus,
@@ -29,6 +33,9 @@ export class CalendarWatchService {
   // Note: No renewal needed - watch is recreated when user re-authenticates
   private readonly WATCH_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000;
 
+  // Batch size for parallel event processing
+  private readonly EVENT_BATCH_SIZE = 10;
+
   constructor(
     @InjectRepository(Provider)
     private providersRepository: Repository<Provider>,
@@ -44,19 +51,26 @@ export class CalendarWatchService {
    */
   async setupWatch(userId: string): Promise<Provider | null> {
     const provider = await this.providersRepository.findOne({
-      where: { userId, providerName: ProviderOptions.google, isConnected: true },
+      where: {
+        userId,
+        providerName: ProviderOptions.google,
+        isConnected: true,
+      },
     });
 
     if (!provider) {
-      this.logger.warn(`No connected Google provider found for userId=${userId}`);
+      this.logger.warn(
+        `No connected Google provider found for userId=${userId}`,
+      );
       return null;
     }
 
     try {
       // Get fresh access token
-      const { access_token } = await this.providersGoogleService.refreshGoogleToken(
-        provider.refreshToken,
-      );
+      const { access_token } =
+        await this.providersGoogleService.refreshGoogleToken(
+          provider.refreshToken,
+        );
 
       // Generate unique channel ID
       const channelId = uuidv4();
@@ -85,7 +99,9 @@ export class CalendarWatchService {
       // Update provider with watch details
       provider.watchChannelId = channelId;
       provider.watchResourceId = watchResponse.data.resourceId;
-      provider.watchExpiresAt = new Date(parseInt(watchResponse.data.expiration));
+      provider.watchExpiresAt = new Date(
+        parseInt(watchResponse.data.expiration),
+      );
       provider.watchStatus = WatchStatus.ACTIVE;
       provider.syncToken = syncToken;
       provider.lastMessageNumber = 0;
@@ -120,9 +136,10 @@ export class CalendarWatchService {
     }
 
     try {
-      const { access_token } = await this.providersGoogleService.refreshGoogleToken(
-        provider.refreshToken,
-      );
+      const { access_token } =
+        await this.providersGoogleService.refreshGoogleToken(
+          provider.refreshToken,
+        );
 
       await axios.post(
         'https://www.googleapis.com/calendar/v3/channels/stop',
@@ -138,7 +155,9 @@ export class CalendarWatchService {
         },
       );
 
-      this.logger.log(`Watch channel stopped | channelId=${provider.watchChannelId}`);
+      this.logger.log(
+        `Watch channel stopped | channelId=${provider.watchChannelId}`,
+      );
     } catch (err: any) {
       // 404 is expected if channel already expired
       if (err?.response?.status !== 404) {
@@ -194,7 +213,9 @@ export class CalendarWatchService {
     // Handle different resource states
     if (resourceState === 'sync') {
       // Initial sync notification after watch setup - just acknowledge
-      this.logger.log(`Sync notification acknowledged | channelId=${channelId}`);
+      this.logger.log(
+        `Sync notification acknowledged | channelId=${channelId}`,
+      );
       return;
     }
 
@@ -208,28 +229,49 @@ export class CalendarWatchService {
    * Sync only today's meetings for a user.
    * Called immediately after calendar connection to give users quick access to their day's meetings.
    */
-  async syncTodaysMeetings(userId: string): Promise<{ synced: number; errors: string[] }> {
+  async syncTodaysMeetings(
+    userId: string,
+  ): Promise<{ synced: number; errors: string[] }> {
     const result = { synced: 0, errors: [] as string[] };
 
     const provider = await this.providersRepository.findOne({
-      where: { userId, providerName: ProviderOptions.google, isConnected: true },
+      where: {
+        userId,
+        providerName: ProviderOptions.google,
+        isConnected: true,
+      },
     });
 
     if (!provider) {
-      this.logger.warn(`No connected Google provider found for userId=${userId}`);
+      this.logger.warn(
+        `No connected Google provider found for userId=${userId}`,
+      );
       result.errors.push('No connected Google provider found');
       return result;
     }
 
     try {
-      const { access_token } = await this.providersGoogleService.refreshGoogleToken(
-        provider.refreshToken,
-      );
+      const { access_token } =
+        await this.providersGoogleService.refreshGoogleToken(
+          provider.refreshToken,
+        );
 
       // Calculate today's time bounds
       const now = new Date();
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      const startOfDay = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+      );
+      const endOfDay = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        23,
+        59,
+        59,
+        999,
+      );
 
       // Use the current time as timeMin to avoid syncing past meetings
       const timeMin = now > startOfDay ? now : startOfDay;
@@ -254,14 +296,26 @@ export class CalendarWatchService {
 
         const { items, nextPageToken: nextPage } = response.data;
 
-        for (const event of items || []) {
-          try {
-            const action = await this.processEventChange(userId, event);
-            if (action === 'created') {
-              result.synced++;
+        // Process events in parallel batches
+        const events = items || [];
+        for (let i = 0; i < events.length; i += this.EVENT_BATCH_SIZE) {
+          const batch = events.slice(i, i + this.EVENT_BATCH_SIZE);
+          const batchResults = await Promise.allSettled(
+            batch.map((event) => this.processEventChange(userId, event)),
+          );
+
+          // Count results and collect errors
+          for (let j = 0; j < batchResults.length; j++) {
+            const batchResult = batchResults[j];
+            if (batchResult.status === 'fulfilled') {
+              if (batchResult.value === 'created') {
+                result.synced++;
+              }
+            } else {
+              result.errors.push(
+                `Event ${batch[j].id}: ${batchResult.reason?.message || 'Unknown error'}`,
+              );
             }
-          } catch (err: any) {
-            result.errors.push(`Event ${event.id}: ${err.message}`);
           }
         }
 
@@ -287,7 +341,10 @@ export class CalendarWatchService {
    * Perform a full sync to get the initial syncToken.
    * Returns the syncToken for future incremental syncs.
    */
-  private async performFullSync(userId: string, accessToken: string): Promise<string | null> {
+  private async performFullSync(
+    userId: string,
+    accessToken: string,
+  ): Promise<string | null> {
     let nextPageToken: string | undefined;
     let syncToken: string | null = null;
 
@@ -309,9 +366,13 @@ export class CalendarWatchService {
 
         const { items, nextPageToken: nextPage, nextSyncToken } = response.data;
 
-        // Process events (create meetings for those with meeting links)
-        for (const event of items || []) {
-          await this.processEventChange(userId, event);
+        // Process events in parallel batches
+        const events = items || [];
+        for (let i = 0; i < events.length; i += this.EVENT_BATCH_SIZE) {
+          const batch = events.slice(i, i + this.EVENT_BATCH_SIZE);
+          await Promise.allSettled(
+            batch.map((event) => this.processEventChange(userId, event)),
+          );
         }
 
         nextPageToken = nextPage;
@@ -335,16 +396,25 @@ export class CalendarWatchService {
    * Perform incremental sync using the stored syncToken.
    */
   async performIncrementalSync(provider: Provider): Promise<SyncResult> {
-    const result: SyncResult = { created: 0, updated: 0, deleted: 0, errors: [] };
+    const result: SyncResult = {
+      created: 0,
+      updated: 0,
+      deleted: 0,
+      errors: [],
+    };
 
     if (!provider.syncToken) {
       this.logger.warn(`No syncToken available | userId=${provider.userId}`);
       // Fall back to full sync
       try {
-        const { access_token } = await this.providersGoogleService.refreshGoogleToken(
-          provider.refreshToken,
+        const { access_token } =
+          await this.providersGoogleService.refreshGoogleToken(
+            provider.refreshToken,
+          );
+        provider.syncToken = await this.performFullSync(
+          provider.userId,
+          access_token,
         );
-        provider.syncToken = await this.performFullSync(provider.userId, access_token);
         await this.providersRepository.save(provider);
       } catch (err: any) {
         result.errors.push('Failed to perform full sync fallback');
@@ -353,9 +423,10 @@ export class CalendarWatchService {
     }
 
     try {
-      const { access_token } = await this.providersGoogleService.refreshGoogleToken(
-        provider.refreshToken,
-      );
+      const { access_token } =
+        await this.providersGoogleService.refreshGoogleToken(
+          provider.refreshToken,
+        );
 
       let nextPageToken: string | undefined;
       let newSyncToken: string | null = null;
@@ -375,14 +446,28 @@ export class CalendarWatchService {
 
         const { items, nextPageToken: nextPage, nextSyncToken } = response.data;
 
-        for (const event of items || []) {
-          try {
-            const action = await this.processEventChange(provider.userId, event);
-            if (action === 'created') result.created++;
-            else if (action === 'updated') result.updated++;
-            else if (action === 'deleted') result.deleted++;
-          } catch (err: any) {
-            result.errors.push(`Event ${event.id}: ${err.message}`);
+        // Process events in parallel batches
+        const events = items || [];
+        for (let i = 0; i < events.length; i += this.EVENT_BATCH_SIZE) {
+          const batch = events.slice(i, i + this.EVENT_BATCH_SIZE);
+          const batchResults = await Promise.allSettled(
+            batch.map((event) =>
+              this.processEventChange(provider.userId, event),
+            ),
+          );
+
+          // Count results and collect errors
+          for (let j = 0; j < batchResults.length; j++) {
+            const batchResult = batchResults[j];
+            if (batchResult.status === 'fulfilled') {
+              if (batchResult.value === 'created') result.created++;
+              else if (batchResult.value === 'updated') result.updated++;
+              else if (batchResult.value === 'deleted') result.deleted++;
+            } else {
+              result.errors.push(
+                `Event ${batch[j].id}: ${batchResult.reason?.message || 'Unknown error'}`,
+              );
+            }
           }
         }
 
@@ -407,13 +492,19 @@ export class CalendarWatchService {
     } catch (err: any) {
       // Handle 410 Gone (sync token expired)
       if (err?.response?.status === 410) {
-        this.logger.warn(`Sync token expired | userId=${provider.userId} | performing full sync`);
+        this.logger.warn(
+          `Sync token expired | userId=${provider.userId} | performing full sync`,
+        );
 
         try {
-          const { access_token } = await this.providersGoogleService.refreshGoogleToken(
-            provider.refreshToken,
+          const { access_token } =
+            await this.providersGoogleService.refreshGoogleToken(
+              provider.refreshToken,
+            );
+          provider.syncToken = await this.performFullSync(
+            provider.userId,
+            access_token,
           );
-          provider.syncToken = await this.performFullSync(provider.userId, access_token);
           await this.providersRepository.save(provider);
         } catch (fullSyncErr: any) {
           result.errors.push('Failed to recover from expired sync token');
@@ -482,7 +573,9 @@ export class CalendarWatchService {
         existingMeeting.status = MeetingStatus.CANCELLED;
         await this.meetingsRepository.save(existingMeeting);
 
-        this.logger.log(`Meeting link removed, deleted | calendarEventId=${calendarEventId}`);
+        this.logger.log(
+          `Meeting link removed, deleted | calendarEventId=${calendarEventId}`,
+        );
         return 'deleted';
       }
 
@@ -496,7 +589,9 @@ export class CalendarWatchService {
     }
 
     // Check if event is in the future
-    const startTime = event.start?.dateTime ? new Date(event.start.dateTime) : null;
+    const startTime = event.start?.dateTime
+      ? new Date(event.start.dateTime)
+      : null;
     if (!startTime || startTime < new Date()) {
       // Event is in the past or has no start time
       return 'skipped';
@@ -534,7 +629,9 @@ export class CalendarWatchService {
     meetingUrl: string,
     meetingProvider: MeetingProvider,
   ): Promise<'created' | 'skipped'> {
-    const startTime = event.start?.dateTime ? new Date(event.start.dateTime) : null;
+    const startTime = event.start?.dateTime
+      ? new Date(event.start.dateTime)
+      : null;
     const endTime = event.end?.dateTime ? new Date(event.end.dateTime) : null;
 
     if (!startTime) {
@@ -588,8 +685,12 @@ export class CalendarWatchService {
     event: GoogleCalendarEvent,
     meetingUrl: string,
   ): Promise<'updated' | 'skipped'> {
-    const newStartTime = event.start?.dateTime ? new Date(event.start.dateTime) : null;
-    const newEndTime = event.end?.dateTime ? new Date(event.end.dateTime) : null;
+    const newStartTime = event.start?.dateTime
+      ? new Date(event.start.dateTime)
+      : null;
+    const newEndTime = event.end?.dateTime
+      ? new Date(event.end.dateTime)
+      : null;
 
     if (!newStartTime) {
       return 'skipped';
@@ -610,7 +711,10 @@ export class CalendarWatchService {
 
       // Schedule new bot if event is in the future
       if (newStartTime > new Date()) {
-        const meetingBot = await this.scheduleMeetingBot(meetingUrl, newStartTime);
+        const meetingBot = await this.scheduleMeetingBot(
+          meetingUrl,
+          newStartTime,
+        );
         meeting.botId = meetingBot?.id ?? '';
       } else {
         meeting.botId = '';
@@ -654,7 +758,9 @@ export class CalendarWatchService {
 
     // Check description for meeting links
     if (event.description) {
-      const zoomMatch = event.description.match(/https?:\/\/[^\s]*zoom\.us\/[^\s]*/i);
+      const zoomMatch = event.description.match(
+        /https?:\/\/[^\s]*zoom\.us\/[^\s]*/i,
+      );
       if (zoomMatch) return zoomMatch[0];
 
       const teamsMatch = event.description.match(
@@ -662,7 +768,9 @@ export class CalendarWatchService {
       );
       if (teamsMatch) return teamsMatch[0];
 
-      const meetMatch = event.description.match(/https?:\/\/meet\.google\.com\/[^\s]*/i);
+      const meetMatch = event.description.match(
+        /https?:\/\/meet\.google\.com\/[^\s]*/i,
+      );
       if (meetMatch) return meetMatch[0];
     }
 

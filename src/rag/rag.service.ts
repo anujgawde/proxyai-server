@@ -1,19 +1,16 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject } from '@nestjs/common';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { GoogleGenAI } from '@google/genai';
-import { pipeline, env } from '@xenova/transformers';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { QAEntry, QAStatus } from 'src/entities/qa-entry.entity';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { TranscriptData } from 'src/entities/transcript-entry.entity';
-import * as fs from 'fs';
+import * as fs from 'fs/promises';
 import * as path from 'path';
-
-// Configure transformers.js
-env.allowRemoteModels = true;
-env.allowLocalModels = true;
+import Piscina from 'piscina';
+import { EMBEDDING_WORKER_POOL } from 'src/workers/worker-pool.module';
 
 interface SearchResult {
   content: string;
@@ -28,7 +25,13 @@ interface SearchResult {
 interface RAGAnswer {
   answer: string;
   sources: string[];
-  // relevantChunks: SearchResult[];
+}
+
+interface EmbeddingResult {
+  success: boolean;
+  embedding?: number[];
+  embeddings?: number[][];
+  error?: string;
 }
 
 @Injectable()
@@ -36,14 +39,16 @@ export class RAGService implements OnModuleInit {
   private readonly logger = new Logger(RAGService.name);
   private qdrantClient: QdrantClient;
   private genAI: GoogleGenAI;
-  private embeddingPipeline: any;
   private readonly collectionName = 'meeting_transcripts';
-  private readonly embeddingModel = 'Xenova/all-MiniLM-L6-v2';
-  private isEmbeddingModelLoaded = false;
+
+  // Prompt cache - loaded once at startup
+  private promptCache: Map<string, string> = new Map();
 
   constructor(
     @InjectRepository(QAEntry)
     private readonly qaEntriesRepository: Repository<QAEntry>,
+    @Inject(EMBEDDING_WORKER_POOL)
+    private readonly embeddingWorkerPool: Piscina,
   ) {
     this.qdrantClient = new QdrantClient({
       url: process.env.QDRANT_URL,
@@ -56,32 +61,53 @@ export class RAGService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    await this.initializeEmbeddingModel();
+    await this.loadPromptCache();
     await this.initializeCollection();
+    // Temp:
+    await this.warmupWorkerPool();
   }
 
-  private async initializeEmbeddingModel() {
+  /**
+   * Load all prompt templates into memory at startup
+   */
+  private async loadPromptCache(): Promise<void> {
     try {
-      this.logger.log('Loading local embedding model...');
-      this.embeddingPipeline = await pipeline(
-        'feature-extraction',
-        this.embeddingModel,
-        {
-          quantized: false,
-          progress_callback: (progress) => {
-            if (progress.status === 'downloading') {
-              this.logger.log(
-                `Downloading model: ${Math.round((progress.loaded / progress.total) * 100)}%`,
-              );
-            }
-          },
-        },
-      );
-      this.isEmbeddingModelLoaded = true;
-      this.logger.log('Local embedding model initialized successfully');
+      const promptsDir = path.join(__dirname, 'prompts');
+
+      // Load QA prompt
+      const qaPromptPath = path.join(promptsDir, 'qa_prompt.txt');
+      const qaPrompt = await fs.readFile(qaPromptPath, 'utf-8');
+      this.promptCache.set('qa', qaPrompt);
+
+      this.logger.log('Prompt templates loaded into cache');
     } catch (error) {
-      this.logger.error('Error initializing embedding model:', error);
-      throw new Error('Failed to initialize local embedding model');
+      this.logger.error('Error loading prompt cache:', error);
+      throw new Error('Failed to load prompt templates');
+    }
+  }
+
+  // Temp:
+  /**
+   * Warmup worker pool by sending a test embedding request
+   * This ensures the model is loaded before real requests arrive
+   */
+  private async warmupWorkerPool(): Promise<void> {
+    try {
+      this.logger.log('Warming up embedding worker pool...');
+
+      const result: EmbeddingResult = await this.embeddingWorkerPool.run({
+        type: 'single',
+        text: 'warmup test',
+      });
+
+      if (result.success) {
+        this.logger.log('Embedding worker pool warmed up and ready');
+      } else {
+        throw new Error(result.error || 'Warmup failed');
+      }
+    } catch (error) {
+      this.logger.error('Error warming up worker pool:', error);
+      // Don't throw - allow startup to continue, pool will initialize on first request
     }
   }
 
@@ -111,7 +137,7 @@ export class RAGService implements OnModuleInit {
         );
         await this.createIndexes();
       }
-    } catch (error) {
+    } catch (error: any) {
       if (error.status === 409) {
         this.logger.log('Collection already exists, continuing...');
         await this.createIndexes();
@@ -139,54 +165,59 @@ export class RAGService implements OnModuleInit {
       });
 
       this.logger.log('Created indexes successfully');
-    } catch (error) {
+    } catch (error: any) {
       if (error.status !== 409) {
         this.logger.error('Error creating indexes:', error);
       }
     }
   }
 
-  private async waitForModelLoad(): Promise<void> {
-    while (!this.isEmbeddingModelLoaded) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-
+  /**
+   * Generate embedding using worker thread pool
+   */
   private async generateEmbedding(text: string): Promise<number[]> {
-    await this.waitForModelLoad();
-
     try {
-      const output = await this.embeddingPipeline(text, {
-        pooling: 'mean',
-        normalize: true,
+      const result: EmbeddingResult = await this.embeddingWorkerPool.run({
+        type: 'single',
+        text,
       });
 
-      const embedding = Array.from(output.data) as number[];
-
-      if (!Array.isArray(embedding) || embedding.length === 0) {
-        throw new Error('Invalid embedding generated');
+      if (!result.success || !result.embedding) {
+        throw new Error(result.error || 'Failed to generate embedding');
       }
 
-      return embedding;
-    } catch (error) {
+      return result.embedding;
+    } catch (error: any) {
       this.logger.error('Error generating embedding:', error);
       throw new Error(`Failed to generate embedding: ${error.message}`);
     }
   }
 
+  /**
+   * Generate embeddings for multiple texts
+   */
   private async generateEmbeddings(texts: string[]): Promise<number[][]> {
-    await this.waitForModelLoad();
-
     const embeddings: number[][] = [];
     const batchSize = 10;
 
-    this.logger.log(`Generating embeddings for ${texts.length} texts...`);
+    this.logger.log(
+      `Generating embeddings for ${texts.length} texts using worker pool...`,
+    );
 
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
-      const batchPromises = batch.map((text) => this.generateEmbedding(text));
-      const batchEmbeddings = await Promise.all(batchPromises);
-      embeddings.push(...batchEmbeddings);
+
+      // Send batch to worker pool
+      const result: EmbeddingResult = await this.embeddingWorkerPool.run({
+        type: 'batch',
+        texts: batch,
+      });
+
+      if (!result.success || !result.embeddings) {
+        throw new Error(result.error || 'Failed to generate batch embeddings');
+      }
+
+      embeddings.push(...result.embeddings);
 
       const processed = Math.min(i + batchSize, texts.length);
       this.logger.log(`Generated embeddings: ${processed}/${texts.length}`);
@@ -213,18 +244,6 @@ export class RAGService implements OnModuleInit {
   }> {
     if (transcripts.length === 0) return [];
 
-    // {
-    //   speaker_name: transcriptionData.speaker_name,
-    //   speaker_uuid: transcriptionData.speaker_uuid,
-    //   speaker_user_uuid: transcriptionData.speaker_user_uuid,
-    //   speaker_is_host: transcriptionData.speaker_is_host,
-    //   timestamp_ms: transcriptionData.timestamp_ms,
-    //   duration_ms: transcriptionData.duration_ms,
-    //   transcription: {
-    //     transcript: transcriptionData.transcript,
-    //     words: transcriptionData.words,
-    //   },
-
     const chunks: Array<{
       transcript: string;
       speaker: string;
@@ -245,9 +264,9 @@ export class RAGService implements OnModuleInit {
       const current = transcripts[i];
       const timeDiff = currentChunk.timestamp - current.timestamp_ms;
 
-      // Merge if same speaker and within 30 seconds
+      // Merge if same speaker and within 60 seconds
       const shouldMerge =
-        current.speaker_uuid === currentChunk.speaker && timeDiff < 60000; // 30 seconds
+        current.speaker_uuid === currentChunk.speaker && timeDiff < 60000;
 
       if (shouldMerge) {
         // Merge into current chunk
@@ -459,9 +478,11 @@ export class RAGService implements OnModuleInit {
         })
         .join('\n\n');
 
-      // Load QA prompt template
-      const promptPath = path.join(__dirname, 'prompts', 'qa_prompt.txt');
-      const qaPrompt = fs.readFileSync(promptPath, 'utf-8');
+      // Get QA prompt from cache
+      const qaPrompt = this.promptCache.get('qa');
+      if (!qaPrompt) {
+        throw new Error('QA prompt template not loaded');
+      }
 
       const prompt = qaPrompt
         .replace('{{context}}', context)
@@ -546,7 +567,7 @@ export class RAGService implements OnModuleInit {
       });
 
       return await this.qaEntriesRepository.save(qaEntry);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error('Error processing question:', error);
 
       // Save failed attempt to database with user-friendly error message

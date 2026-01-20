@@ -11,12 +11,12 @@ import {
   TranscriptEntry,
   TranscriptData,
 } from 'src/entities/transcript-entry.entity';
-import { TranscriptSegment } from 'src/entities/transcript-segment.entity';
 import { Meeting } from 'src/entities/meeting.entity';
 import { GeminiService } from 'src/gemini/gemini.service';
 import { Summary } from 'src/entities/summary.entity';
 import { RAGService } from 'src/rag/rag.service';
 import { MeetingsService } from 'src/meetings/meetings.service';
+import { TranscriptSegment } from 'src/entities/transcript-segment.entity';
 
 interface BufferMetadata {
   transcripts: TranscriptData[];
@@ -28,7 +28,11 @@ export class TranscriptsService implements OnModuleDestroy {
   private readonly logger = new Logger(TranscriptsService.name);
   private transcriptBuffer = new Map<number, BufferMetadata>();
   private flushIntervals = new Map<number, NodeJS.Timeout>();
-  private readonly FLUSH_INTERVAL = 1 * 60 * 1000;
+  private readonly FLUSH_INTERVAL = 1 * 60 * 1000; // 1 minute
+  private readonly MAX_BUFFER_SIZE = 200; // Max transcripts per meeting before force flush
+
+  // To prevent overlapping flushes:
+  private processingMeetings = new Set<number>(); // Tracking Background Meetings
 
   constructor(
     @InjectRepository(TranscriptEntry)
@@ -46,7 +50,6 @@ export class TranscriptsService implements OnModuleDestroy {
   ) {}
 
   async addTranscript(meeting: Meeting, transcriptionData: any): Promise<void> {
-    // Save individual segment to database immediately
     const segment = this.transcriptSegmentRepository.create({
       meetingId: meeting.id,
       speakerName: transcriptionData.speaker_name,
@@ -58,14 +61,13 @@ export class TranscriptsService implements OnModuleDestroy {
       timestampMs: transcriptionData.timestamp_ms.toString(),
       durationMs: transcriptionData.duration_ms.toString(),
     });
+    this.transcriptSegmentRepository.save(segment).catch((err) => {
+      this.logger.error(`Error saving transcript segment: ${err.message}`);
+    });
 
-    await this.transcriptSegmentRepository.save(segment);
+    this.logger.log(`Queued transcript segment for meeting ${meeting.id}`);
 
-    this.logger.log(
-      `Saved transcript segment ${segment.id} for meeting ${meeting.id}`,
-    );
-
-    // Emit to frontend via SSE immediately
+    // Emit to frontend via SSE:
     this.meetingsService.transcriptEvents$.next({
       userId: meeting.userId,
       type: 'transcript_update',
@@ -86,7 +88,7 @@ export class TranscriptsService implements OnModuleDestroy {
     const bufferData = this.transcriptBuffer.get(meeting.id)!;
     const buffer = bufferData.transcripts;
 
-    // Add to buffer without merging (let RAG service handle grouping)
+    // Grouping takes place in RAG service. Adding buffer without merge:
     buffer.push({
       speaker_name: transcriptionData.speaker_name,
       speaker_uuid: transcriptionData.speaker_uuid,
@@ -103,20 +105,44 @@ export class TranscriptsService implements OnModuleDestroy {
     this.logger.debug(
       `Added transcript to buffer for meeting ${meeting.id}. Buffer size: ${buffer.length}`,
     );
+
+    // Force flush if buffer exceeds max size (bounded buffer)
+    if (buffer.length >= this.MAX_BUFFER_SIZE) {
+      this.logger.warn(
+        `Buffer for meeting ${meeting.id} reached max size (${this.MAX_BUFFER_SIZE}), triggering force flush`,
+      );
+      setImmediate(() => {
+        this.flushMeetingBuffer(meeting.id).catch((err) => {
+          this.logger.error(`Force flush error: ${err.message}`);
+        });
+      });
+    }
   }
 
   private startFlushInterval(meetingId: number): void {
     if (this.flushIntervals.has(meetingId)) {
       return;
     }
-    const interval = setInterval(async () => {
-      await this.flushMeetingBuffer(meetingId);
+    const interval = setInterval(() => {
+      this.flushMeetingBuffer(meetingId).catch((err) => {
+        this.logger.error(
+          `Flush interval error for meeting ${meetingId}: ${err.message}`,
+        );
+      });
     }, this.FLUSH_INTERVAL);
     this.flushIntervals.set(meetingId, interval);
     this.logger.log(`Started flush interval for meeting ${meetingId}`);
   }
 
   async flushMeetingBuffer(meetingId: number): Promise<void> {
+    // Prevent overlapping flushes for the same meeting
+    if (this.processingMeetings.has(meetingId)) {
+      this.logger.debug(
+        `Meeting ${meetingId} is already being processed, skipping flush`,
+      );
+      return;
+    }
+
     const bufferData = this.transcriptBuffer.get(meetingId);
     if (!bufferData || bufferData.transcripts.length === 0) {
       this.logger.debug(`No transcripts to flush for meeting ${meetingId}`);
@@ -124,6 +150,8 @@ export class TranscriptsService implements OnModuleDestroy {
     }
 
     try {
+      this.processingMeetings.add(meetingId);
+
       const meeting = await this.meetingsService.getMeetingById(meetingId);
       if (!meeting) {
         this.logger.warn(`Meeting ${meetingId} not found, clearing buffer`);
@@ -135,18 +163,16 @@ export class TranscriptsService implements OnModuleDestroy {
       const timeStart = bufferData.timeStart;
       const timeEnd = new Date().toISOString();
 
-      // Reset buffer immediately
+      // Reset buffer
       this.transcriptBuffer.set(meetingId, {
         transcripts: [],
         timeStart: timeEnd,
       });
 
-      // Group transcripts by speaker for Qdrant (call RAG's chunking)
-      const groupedChunks =
-        this.ragService.chunkTranscriptsForContext(transcriptsToProcess);
+      this.logger.log(
+        `Flushing ${transcriptsToProcess.length} transcript segments for meeting ${meetingId}`,
+      );
 
-      // Save grouped chunks to TranscriptEntry
-      // Store the same grouped structure that goes to Qdrant
       const transcriptEntry = this.transcriptRepository.create({
         transcripts: transcriptsToProcess,
         meetingId: meetingId,
@@ -155,31 +181,48 @@ export class TranscriptsService implements OnModuleDestroy {
       });
       await this.transcriptRepository.save(transcriptEntry);
 
-      this.logger.log(
-        `Flushed ${transcriptsToProcess.length} transcript segments (${groupedChunks.length} grouped chunks) for meeting ${meetingId}`,
-      );
-
-      // Store grouped chunks in Qdrant vector database
-      try {
-        await this.ragService.storeTranscripts(meetingId, transcriptsToProcess);
-        this.logger.log(
-          `Stored ${groupedChunks.length} grouped chunks in vector database for meeting ${meetingId}`,
-        );
-      } catch (ragError) {
-        this.logger.error(
-          `Error storing transcripts in vector database: ${ragError.message}`,
-        );
-        // Don't throw - continue with summary generation even if vector storage fails
-      }
-
-      // Generate summary from buffer
-      this.generateAndSaveSummary(meeting.id, transcriptsToProcess);
-    } catch (error) {
+      // Process vector storage and summary generation in background
+      this.processInBackground(meetingId, meeting.userId, transcriptsToProcess);
+    } catch (error: any) {
       this.logger.error(
         `Error flushing transcripts for meeting ${meetingId}:`,
         error,
       );
+    } finally {
+      this.processingMeetings.delete(meetingId);
     }
+  }
+
+  /**
+   * Process vector storage and summary generation in background
+   */
+  private processInBackground(
+    meetingId: number,
+    userId: string,
+    transcripts: TranscriptData[],
+  ): void {
+    // Vector storage
+    setImmediate(async () => {
+      try {
+        await this.ragService.storeTranscripts(meetingId, transcripts);
+        this.logger.log(`[BACKGROUND] Stored vectors for meeting ${meetingId}`);
+      } catch (err: any) {
+        this.logger.error(
+          `[BACKGROUND] Error storing vectors for meeting ${meetingId}: ${err.message}`,
+        );
+      }
+    });
+
+    // Summary generation
+    setImmediate(async () => {
+      try {
+        await this.generateAndSaveSummary(meetingId, userId, transcripts);
+      } catch (err: any) {
+        this.logger.error(
+          `[BACKGROUND] Error generating summary for meeting ${meetingId}: ${err.message}`,
+        );
+      }
+    });
   }
 
   async flushAndClearMeeting(meetingId: number): Promise<void> {
@@ -189,12 +232,16 @@ export class TranscriptsService implements OnModuleDestroy {
 
   private async generateAndSaveSummary(
     meetingId: number,
+    userId: string,
     transcripts: TranscriptData[],
   ): Promise<void> {
     try {
-      this.logger.log(`Generating summary for meeting ${meetingId}...`);
+      this.logger.log(
+        `[BACKGROUND] Generating summary for meeting ${meetingId}...`,
+      );
       const summaryContent =
         await this.geminiService.generateSummary(transcripts);
+
       const meeting = await this.meetingsService.getMeetingById(meetingId);
       if (!meeting) {
         this.logger.warn(`Meeting ${meetingId} not found for summary`);
@@ -206,19 +253,21 @@ export class TranscriptsService implements OnModuleDestroy {
         meeting: meeting,
       });
       const savedSummary = await this.summaryRepository.save(summary);
+
+      // Emit summary update via SSE
       this.meetingsService.summaryEvent$.next({
-        userId: meeting.userId,
+        userId: userId,
         type: 'summary_update',
         data: savedSummary,
         timestamp: new Date().toISOString(),
       });
 
       this.logger.log(
-        `Summary saved for meeting ${meetingId}: ${savedSummary.id}`,
+        `[BACKGROUND] Summary saved for meeting ${meetingId}: ${savedSummary.id}`,
       );
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(
-        `Error generating/saving summary for meeting ${meetingId}:`,
+        `[BACKGROUND] Error generating/saving summary for meeting ${meetingId}:`,
         error,
       );
     }
@@ -231,33 +280,31 @@ export class TranscriptsService implements OnModuleDestroy {
       this.flushIntervals.delete(meetingId);
     }
     this.transcriptBuffer.delete(meetingId);
+    this.processingMeetings.delete(meetingId);
     this.logger.log(
       `Cleared buffer and stopped flush for meeting ${meetingId}`,
     );
   }
 
-  // getBufferStatus(meetingId: string): {
-  //   bufferSize: number;
-  //   transcripts: TranscriptData[];
-  //   timeStart: string;
-  //   timeElapsed: number;
-  // } | null {
-  //   const bufferData = this.transcriptBuffer.get(meetingId);
+  /**
+   * Get current buffer statistics for monitoring
+   */
+  getBufferStats(): {
+    activeMeetings: number;
+    totalBufferedTranscripts: number;
+    processingCount: number;
+  } {
+    let totalBufferedTranscripts = 0;
+    this.transcriptBuffer.forEach((buffer) => {
+      totalBufferedTranscripts += buffer.transcripts.length;
+    });
 
-  //   if (!bufferData) {
-  //     return null;
-  //   }
-
-  //   const timeElapsed =
-  //     new Date().getTime() - new Date(bufferData.timeStart).getTime();
-
-  //   return {
-  //     bufferSize: bufferData.transcripts.length,
-  //     transcripts: bufferData.transcripts,
-  //     timeStart: bufferData.timeStart,
-  //     timeElapsed,
-  //   };
-  // }
+    return {
+      activeMeetings: this.transcriptBuffer.size,
+      totalBufferedTranscripts,
+      processingCount: this.processingMeetings.size,
+    };
+  }
 
   async onModuleDestroy() {
     this.logger.log('Flushing all buffers before shutdown...');
@@ -268,6 +315,7 @@ export class TranscriptsService implements OnModuleDestroy {
     this.flushIntervals.forEach((interval) => clearInterval(interval));
     this.flushIntervals.clear();
     this.transcriptBuffer.clear();
+    this.processingMeetings.clear();
     this.logger.log('Transcript buffer service shutdown complete');
   }
 }

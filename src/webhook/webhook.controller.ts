@@ -4,19 +4,12 @@ import {
   Body,
   Logger,
   HttpCode,
-  UseGuards,
   Get,
-  ValidationPipe,
-  UsePipes,
   Headers,
 } from '@nestjs/common';
 import { MeetingsService } from 'src/meetings/meetings.service';
 import { CalendarWatchService } from 'src/providers/calendar-watch.service';
 import { GoogleWebhookHeaders } from 'src/providers/dto/calendar-watch.dto';
-
-// Todo: Temp removed, webhook auth not working
-import { BotWebhookDto } from 'src/entities/bot.entity';
-import { AttendeeWebhookGuard } from './attendee-webhook.guard';
 
 @Controller('webhook')
 export class WebhookController {
@@ -27,6 +20,9 @@ export class WebhookController {
     private readonly calendarWatchService: CalendarWatchService,
   ) {}
 
+  /**
+   * Bot webhook endpoint - handles transcript updates and bot state changes.
+   */
   @Post('/bots')
   @HttpCode(200)
   // @UseGuards(AttendeeWebhookGuard)
@@ -44,21 +40,22 @@ export class WebhookController {
 
     try {
       if (payload.trigger === 'bot.state_change') {
+        // Bot State updates are less frequent:
         await this.meetingsService.updateMeetingFromBotState(payload);
       } else if (payload.trigger === 'transcript.update') {
-        await this.meetingsService.handleTranscriptUpdate(payload);
+        this.meetingsService.handleTranscriptUpdate(payload).catch((err) => {
+          this.logger.error(`Transcript update error: ${err.message}`);
+        });
       }
       return { success: true };
-    } catch (error) {
-      this.logger.error('Error handling bot state webhook:', error);
-      // Return 200 anyway to avoid Attendee retrying
+    } catch (error: any) {
+      this.logger.error('Error handling bot webhook:', error);
       return { success: false, error: error.message };
     }
   }
 
   @Get('/bot-test')
   @HttpCode(200)
-  // @UseGuards(AttendeeWebhookGuard)
   async testRoute() {
     return 'Controller is working';
   }
@@ -66,7 +63,6 @@ export class WebhookController {
   /**
    * Google Calendar webhook endpoint.
    * Receives push notifications when calendar events change.
-   * Must respond with 200 quickly - Google expects fast acknowledgment.
    */
   @Post('/calendar')
   @HttpCode(200)
@@ -89,12 +85,10 @@ export class WebhookController {
       `Calendar webhook received | channelId=${googleHeaders['x-goog-channel-id']} | state=${googleHeaders['x-goog-resource-state']}`,
     );
 
-    // Process asynchronously to respond quickly
+    // processing asynchronously
     // Google expects a response within seconds
-    this.calendarWatchService
-      .handleNotification(googleHeaders)
-      .catch((err) => {
-        this.logger.error('Error handling calendar webhook:', err);
-      });
+    this.calendarWatchService.handleNotification(googleHeaders).catch((err) => {
+      this.logger.error('Error handling calendar webhook:', err);
+    });
   }
 }
