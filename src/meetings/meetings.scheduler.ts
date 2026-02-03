@@ -19,7 +19,7 @@ export class MeetingsScheduler {
   ) {}
 
   // Cron Job that runs every night at 1 AM. Enable the appmodule import to make this active.
-  @Cron('* 1 * * *')
+  @Cron('0 1 * * *')
   async syncMeetingsCron() {
     this.logger.log('Starting syncMeetingsCron');
 
