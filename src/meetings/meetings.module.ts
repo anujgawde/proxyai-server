@@ -16,6 +16,7 @@ import { MeetingsScheduler } from './meetings.scheduler';
 import { Provider } from 'src/entities/providers.entity';
 import { RAGModule } from 'src/rag/rag.module';
 import { ProvidersModule } from 'src/providers/providers.module';
+import { MeetingStreamService } from './services/meeting-stream.service';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { ProvidersModule } from 'src/providers/providers.module';
     ]),
     RAGModule,
     ProvidersModule,
+    MeetingStreamService,
   ],
   controllers: [MeetingsController],
   providers: [
@@ -40,6 +42,6 @@ import { ProvidersModule } from 'src/providers/providers.module';
     GeminiService,
     MeetingsScheduler,
   ],
-  exports: [MeetingsService],
+  exports: [MeetingsService, MeetingStreamService],
 })
 export class MeetingsModule {}
