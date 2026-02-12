@@ -22,47 +22,15 @@ import {
   ScheduleBotParams,
   ScheduledBot,
 } from 'src/entities/bot.entity';
-import { filter, merge, Observable, Subject } from 'rxjs';
+import { Observable } from 'rxjs';
+import {
+  MeetingStreamService,
+  MeetingEvent,
+  TranscriptEvent,
+  SummaryEvent,
+} from './services/meeting-stream.service';
 import { PaginatedResponse } from 'src/common';
-
-export interface MeetingEvent {
-  userId: string;
-  type: 'connected' | 'heartbeat' | 'meeting_status_update';
-  data?: {
-    id: number;
-    status: MeetingStatus;
-  };
-  message?: string;
-  timestamp: string;
-}
-
-export interface TranscriptEvent {
-  userId: string;
-  type: 'connected' | 'heartbeat' | 'transcript_update';
-  data?: {
-    speaker_name: string;
-    speaker_uuid: string;
-    speaker_user_uuid: string;
-    speaker_is_host: boolean;
-    timestamp_ms: number;
-    duration_ms: number;
-    transcription: {
-      transcript: string;
-      words: number;
-    };
-  };
-  message?: string;
-  timestamp: string;
-}
-
-export interface SummaryEvent {
-  userId: string;
-  type: 'connected' | 'heartbeat' | 'summary_update';
-  data?: Summary;
-  message?: string;
-  timestamp: string;
-}
-
+export type { MeetingEvent, TranscriptEvent, SummaryEvent };
 @Injectable()
 export class MeetingsService {
   private readonly logger = new Logger(MeetingsService.name);
@@ -80,45 +48,26 @@ export class MeetingsService {
 
     private transcriptsService: TranscriptsService,
     private ragService: RAGService,
+    private meetingStreamService: MeetingStreamService,
   ) {}
 
-  private meetingEvents$ = new Subject<MeetingEvent>();
-  transcriptEvents$ = new Subject<TranscriptEvent>();
-  summaryEvent$ = new Subject<SummaryEvent>();
-
+  /**
+   * Get SSE stream for user's meeting events
+   */
   getUserMeetingStream(userId: string): Observable<any> {
-    return new Observable((subscriber) => {
-      // Send initial connection success message
-      subscriber.next({
-        data: JSON.stringify({
-          type: 'connected',
-          message: 'SSE connection established',
-          timestamp: new Date().toISOString(),
-        }),
-      });
+    return this.meetingStreamService.getUserMeetingStream(userId);
+  }
 
-      // Heartbeat to prevent browser timeout (every 15 seconds)
-      const heartbeatInterval = setInterval(() => {
-        subscriber.next({
-          data: JSON.stringify({
-            type: 'heartbeat',
-            timestamp: new Date().toISOString(),
-          }),
-        });
-      }, 15000);
+  /**
+   * Expose event subjects for backward compatibility
+   * @deprecated Use MeetingStreamService emit methods instead
+   */
+  get transcriptEvents$() {
+    return this.meetingStreamService.transcriptEventsSubject;
+  }
 
-      const subscription = merge(
-        this.meetingEvents$.pipe(filter((e) => e.userId === userId)),
-        this.transcriptEvents$.pipe(filter((e) => e.userId === userId)),
-        this.summaryEvent$.pipe(filter((e) => e.userId === userId)),
-      ).subscribe((event) => subscriber.next({ data: JSON.stringify(event) }));
-
-      // Cleanup on disconnect
-      return () => {
-        clearInterval(heartbeatInterval);
-        subscription.unsubscribe();
-      };
-    });
+  get summaryEvent$() {
+    return this.meetingStreamService.summaryEventsSubject;
   }
 
   /**
@@ -281,15 +230,11 @@ export class MeetingsService {
       await this.transcriptsService.flushAndClearMeeting(meeting.id);
     }
 
-    this.meetingEvents$.next({
-      userId: meeting.userId,
-      type: 'meeting_status_update',
-      data: {
-        id: meeting.id,
-        status: meeting.status,
-      },
-      timestamp: new Date().toISOString(),
-    });
+    this.meetingStreamService.emitMeetingStatusUpdate(
+      meeting.userId,
+      meeting.id,
+      meeting.status,
+    );
   }
 
   async handleTranscriptUpdate(payload: any): Promise<void> {
