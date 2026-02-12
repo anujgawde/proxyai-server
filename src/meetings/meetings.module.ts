@@ -11,14 +11,11 @@ import { TranscriptSegment } from 'src/entities/transcript-segment.entity';
 import { Summary } from 'src/entities/summary.entity';
 import { TranscriptsService } from 'src/transcripts/transcripts.service';
 import { GeminiService } from 'src/gemini/gemini.service';
-import { RAGService } from 'src/rag/rag.service';
 import { QAEntry } from 'src/entities/qa-entry.entity';
 import { MeetingsScheduler } from './meetings.scheduler';
-import { ProvidersZoomService } from 'src/providers/providers-zoom.service';
-import { ProvidersGoogleService } from 'src/providers/providers-google.service';
-import { CalendarWatchService } from 'src/providers/calendar-watch.service';
 import { Provider } from 'src/entities/providers.entity';
 import { RAGModule } from 'src/rag/rag.module';
+import { ProvidersModule } from 'src/providers/providers.module';
 
 @Module({
   imports: [
@@ -32,6 +29,7 @@ import { RAGModule } from 'src/rag/rag.module';
       Provider,
     ]),
     RAGModule,
+    ProvidersModule,
   ],
   controllers: [MeetingsController],
   providers: [
@@ -41,9 +39,6 @@ import { RAGModule } from 'src/rag/rag.module';
     TranscriptsService,
     GeminiService,
     MeetingsScheduler,
-    ProvidersZoomService,
-    ProvidersGoogleService,
-    CalendarWatchService,
   ],
   exports: [MeetingsService],
 })
