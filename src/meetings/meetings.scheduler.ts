@@ -4,7 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { MeetingsService } from './meetings.service';
 import { Provider, ProviderOptions } from 'src/entities/providers.entity';
-import { ProvidersGoogleService } from 'src/providers/providers-google.service';
+import { ProviderRegistryService } from 'src/providers/provider-registry.service';
 
 @Injectable()
 export class MeetingsScheduler {
@@ -12,7 +12,7 @@ export class MeetingsScheduler {
 
   constructor(
     private readonly meetingsService: MeetingsService,
-    private readonly providersGoogleService: ProvidersGoogleService,
+    private readonly providerRegistry: ProviderRegistryService,
 
     @InjectRepository(Provider)
     private readonly providersRepository: Repository<Provider>,
@@ -59,31 +59,27 @@ export class MeetingsScheduler {
       await Promise.allSettled(
         providers.map(async (provider) => {
           try {
-            // if (provider.providerName === 'zoom') {
-            //   const { accessToken, refreshToken } =
-            //     await this.providersZoomService.refreshZoomTokens(
-            //       provider.refreshToken,
-            //     );
-
-            //   if (!userTokenMap.has(provider.userId)) {
-            //     userTokenMap.set(provider.userId, {});
-            //   }
-
-            //   userTokenMap.get(provider.userId)!.zoomAccessToken = accessToken;
-            // }
-
-            if (provider.providerName === 'google') {
-              const { access_token } =
-                await this.providersGoogleService.refreshGoogleToken(
-                  provider.refreshToken,
-                );
+            if (this.providerRegistry.has(provider.providerName)) {
+              const { accessToken } = await this.providerRegistry.refreshToken(
+                provider.providerName,
+                provider.refreshToken,
+              );
 
               if (!userTokenMap.has(provider.userId)) {
                 userTokenMap.set(provider.userId, {});
               }
 
-              userTokenMap.get(provider.userId)!.googleAccessToken =
-                access_token;
+              // Map provider to token field
+              if (provider.providerName === ProviderOptions.google) {
+                userTokenMap.get(provider.userId)!.googleAccessToken =
+                  accessToken;
+              } else if (provider.providerName === ProviderOptions.zoom) {
+                userTokenMap.get(provider.userId)!.zoomAccessToken =
+                  accessToken;
+              } else if (provider.providerName === ProviderOptions.microsoft) {
+                userTokenMap.get(provider.userId)!.microsoftAccessToken =
+                  accessToken;
+              }
             }
           } catch (err) {
             this.logger.error(
