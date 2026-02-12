@@ -23,6 +23,7 @@ import {
   ScheduledBot,
 } from 'src/entities/bot.entity';
 import { filter, merge, Observable, Subject } from 'rxjs';
+import { PaginatedResponse } from 'src/common';
 
 export interface MeetingEvent {
   userId: string;
@@ -291,15 +292,6 @@ export class MeetingsService {
     });
   }
 
-  //   export interface TranscriptData {
-  //   speaker_name: string;
-  //   speaker_uuid: string;
-  //   speaker_user_uuid: string;
-  //   speaker_is_host: boolean;
-  //   timestamp_ms: number;
-  //   duration_ms: string;
-  //   transcription: { transcript: string; words: number };
-  // }
   async handleTranscriptUpdate(payload: any): Promise<void> {
     const { bot_id, data } = payload;
 
@@ -507,30 +499,21 @@ export class MeetingsService {
     meetingId: string,
     page: number = 1,
     limit: number = 10,
-  ) {
+  ): Promise<PaginatedResponse<Summary>> {
     const parsedMeetingId = parseInt(meetingId);
     const meeting = await this.getMeetingById(parsedMeetingId);
     if (!meeting) {
       this.logger.warn(`Meeting ${meetingId} not found for summaries`);
     }
     const skip = (page - 1) * limit;
-    const [summaries, totalSummaries] =
-      await this.summariesRepository.findAndCount({
-        where: { meetingId: parsedMeetingId },
-        order: { createdAt: 'DESC' }, // Newest first
-        skip,
-        take: limit,
-      });
-    return {
-      data: summaries,
-      pagination: {
-        page,
-        limit,
-        totalSummaries,
-        totalPages: Math.ceil(totalSummaries / limit),
-        hasMore: skip + limit < totalSummaries,
-      },
-    };
+    const result = await this.summariesRepository.findAndCount({
+      where: { meetingId: parsedMeetingId },
+      order: { createdAt: 'DESC' }, // Newest first
+      skip,
+      take: limit,
+    });
+
+    return PaginatedResponse.fromFindAndCount(result, page, limit);
   }
 
   async getTranscriptSegments(
@@ -538,16 +521,7 @@ export class MeetingsService {
     userId: string,
     page: number = 1,
     limit: number = 50,
-  ): Promise<{
-    data: TranscriptSegment[];
-    pagination: {
-      page: number;
-      limit: number;
-      hasMore: boolean;
-      total: number;
-    };
-  }> {
-    // Verify user owns the meeting
+  ): Promise<PaginatedResponse<TranscriptSegment>> {
     const meeting = await this.meetingsRepository.findOne({
       where: { id: meetingId, userId },
     });
@@ -557,24 +531,14 @@ export class MeetingsService {
     }
 
     const skip = (page - 1) * limit;
+    const result = await this.transcriptSegmentRepository.findAndCount({
+      where: { meetingId },
+      order: { timestampMs: 'DESC' }, // Newest transcript segments first
+      skip,
+      take: limit,
+    });
 
-    const [segments, total] =
-      await this.transcriptSegmentRepository.findAndCount({
-        where: { meetingId },
-        order: { timestampMs: 'DESC' }, // Newest first
-        skip,
-        take: limit,
-      });
-
-    return {
-      data: segments,
-      pagination: {
-        page,
-        limit,
-        total,
-        hasMore: skip + segments.length < total,
-      },
-    };
+    return PaginatedResponse.fromFindAndCount(result, page, limit);
   }
 
   async getQAHistory(
@@ -582,17 +546,7 @@ export class MeetingsService {
     userId: string,
     page: number = 1,
     limit: number = 10,
-  ): Promise<{
-    data: QAEntry[];
-    pagination: {
-      page: number;
-      limit: number;
-      totalQA: number;
-      totalPages: number;
-      hasMore: boolean;
-    };
-  }> {
-    // Verify user owns the meeting
+  ): Promise<PaginatedResponse<QAEntry>> {
     const meeting = await this.meetingsRepository.findOne({
       where: { id: meetingId, userId },
     });
@@ -602,24 +556,14 @@ export class MeetingsService {
     }
 
     const skip = (page - 1) * limit;
-
-    const [qaEntries, total] = await this.qaRepository.findAndCount({
+    const result = await this.qaRepository.findAndCount({
       where: { meetingId },
       order: { timestamp: 'DESC' }, // Newest first
       skip,
       take: limit,
     });
 
-    return {
-      data: qaEntries,
-      pagination: {
-        page,
-        limit,
-        totalQA: total,
-        totalPages: Math.ceil(total / limit),
-        hasMore: skip + qaEntries.length < total,
-      },
-    };
+    return PaginatedResponse.fromFindAndCount(result, page, limit);
   }
 
   async askQuestion(
