@@ -1,27 +1,20 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { GoogleGenAI } from '@google/genai';
+import { Injectable, Logger, OnModuleInit, Inject } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { TranscriptData } from 'src/entities/transcript-entry.entity';
+import { AI_MODEL } from 'src/common/interfaces';
+import type { IAIModel } from 'src/common/interfaces';
 
 @Injectable()
 export class GeminiService implements OnModuleInit {
   private readonly logger = new Logger(GeminiService.name);
-  private genAI: GoogleGenAI;
 
   // Prompt cache - loaded once at startup
   private promptCache: Map<string, string> = new Map();
 
-  constructor() {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY is not set in environment variables');
-    }
-
-    this.genAI = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-    });
-  }
+  constructor(
+    @Inject(AI_MODEL) private readonly aiModel: IAIModel,
+  ) {}
 
   async onModuleInit() {
     await this.loadPromptCache();
@@ -64,10 +57,7 @@ export class GeminiService implements OnModuleInit {
         conversationText,
       );
 
-      const result = await this.genAI.models.generateContent({
-        model: 'gemini-2.0-flash-001',
-        contents: prompt,
-      });
+      const result = await this.aiModel.generateContent(prompt);
       const response = result.text || 'Unable to generate answer.';
       const summary = response;
 

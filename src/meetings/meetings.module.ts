@@ -16,6 +16,7 @@ import { MeetingsScheduler } from './meetings.scheduler';
 import { Provider } from 'src/entities/providers.entity';
 import { RAGModule } from 'src/rag/rag.module';
 import { ProvidersModule } from 'src/providers/providers.module';
+import { InfrastructureModule } from 'src/infrastructure/infrastructure.module';
 import { MeetingStreamService } from './services/meeting-stream.service';
 import {
   ScheduledState,
@@ -37,6 +38,7 @@ import {
     ]),
     RAGModule,
     ProvidersModule,
+    InfrastructureModule,
     MeetingStreamService,
   ],
   controllers: [MeetingsController],
