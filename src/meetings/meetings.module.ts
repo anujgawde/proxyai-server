@@ -17,6 +17,12 @@ import { Provider } from 'src/entities/providers.entity';
 import { RAGModule } from 'src/rag/rag.module';
 import { ProvidersModule } from 'src/providers/providers.module';
 import { MeetingStreamService } from './services/meeting-stream.service';
+import {
+  ScheduledState,
+  LiveState,
+  PastState,
+  MeetingStateMachine,
+} from './states';
 
 @Module({
   imports: [
@@ -41,7 +47,11 @@ import { MeetingStreamService } from './services/meeting-stream.service';
     TranscriptsService,
     GeminiService,
     MeetingsScheduler,
+    ScheduledState,
+    LiveState,
+    PastState,
+    MeetingStateMachine,
   ],
-  exports: [MeetingsService, MeetingStreamService],
+  exports: [MeetingsService, MeetingStreamService, MeetingStateMachine],
 })
 export class MeetingsModule {}
