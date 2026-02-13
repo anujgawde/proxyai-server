@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit, Inject } from '@nestjs/common';
-import { QdrantClient } from '@qdrant/js-client-rest';
-import { GoogleGenAI } from '@google/genai';
 import { createHash } from 'crypto';
+import { AI_MODEL, VECTOR_DATABASE } from 'src/common/interfaces';
+import type { IAIModel, IVectorDatabase } from 'src/common/interfaces';
 import { v4 as uuidv4 } from 'uuid';
 import { QAEntry, QAStatus } from 'src/entities/qa-entry.entity';
 import { Repository } from 'typeorm';
@@ -37,8 +37,6 @@ interface EmbeddingResult {
 @Injectable()
 export class RAGService implements OnModuleInit {
   private readonly logger = new Logger(RAGService.name);
-  private qdrantClient: QdrantClient;
-  private genAI: GoogleGenAI;
   private readonly collectionName = 'meeting_transcripts';
 
   // Prompt cache - loaded once at startup
@@ -49,16 +47,11 @@ export class RAGService implements OnModuleInit {
     private readonly qaEntriesRepository: Repository<QAEntry>,
     @Inject(EMBEDDING_WORKER_POOL)
     private readonly embeddingWorkerPool: Piscina,
-  ) {
-    this.qdrantClient = new QdrantClient({
-      url: process.env.QDRANT_URL,
-      apiKey: process.env.QDRANT_API_KEY,
-    });
-
-    this.genAI = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-    });
-  }
+    @Inject(AI_MODEL)
+    private readonly aiModel: IAIModel,
+    @Inject(VECTOR_DATABASE)
+    private readonly vectorDB: IVectorDatabase,
+  ) {}
 
   async onModuleInit() {
     await this.loadPromptCache();
@@ -113,63 +106,30 @@ export class RAGService implements OnModuleInit {
 
   private async initializeCollection() {
     try {
-      const collections = await this.qdrantClient.getCollections();
-      const collectionExists = collections.collections.some(
-        (col) => col.name === this.collectionName,
-      );
-
-      if (!collectionExists) {
-        await this.qdrantClient.createCollection(this.collectionName, {
-          vectors: {
-            size: 384,
-            distance: 'Cosine',
-          },
-          optimizers_config: {
-            default_segment_number: 2,
-          },
-          replication_factor: 1,
-        });
-        this.logger.log(`Created Qdrant collection: ${this.collectionName}`);
-        await this.createIndexes();
-      } else {
-        this.logger.log(
-          `Qdrant collection already exists: ${this.collectionName}`,
-        );
-        await this.createIndexes();
-      }
-    } catch (error: any) {
-      if (error.status === 409) {
-        this.logger.log('Collection already exists, continuing...');
-        await this.createIndexes();
-        return;
-      }
-      this.logger.error('Error initializing Qdrant collection:', error);
+      await this.vectorDB.initializeCollection(this.collectionName, 384, {
+        optimizerConfig: { default_segment_number: 2 },
+        replicationFactor: 1,
+      });
+      await this.createIndexes();
+    } catch (error) {
+      this.logger.error('Error initializing collection:', error);
     }
   }
 
   private async createIndexes() {
-    try {
-      await this.qdrantClient.createPayloadIndex(this.collectionName, {
-        field_name: 'meetingId',
-        field_schema: 'integer',
-      });
-
-      await this.qdrantClient.createPayloadIndex(this.collectionName, {
-        field_name: 'speaker',
-        field_schema: 'keyword',
-      });
-
-      await this.qdrantClient.createPayloadIndex(this.collectionName, {
-        field_name: 'timestamp',
-        field_schema: 'integer',
-      });
-
-      this.logger.log('Created indexes successfully');
-    } catch (error: any) {
-      if (error.status !== 409) {
-        this.logger.error('Error creating indexes:', error);
-      }
-    }
+    await this.vectorDB.createIndex(this.collectionName, {
+      fieldName: 'meetingId',
+      fieldType: 'integer',
+    });
+    await this.vectorDB.createIndex(this.collectionName, {
+      fieldName: 'speaker',
+      fieldType: 'keyword',
+    });
+    await this.vectorDB.createIndex(this.collectionName, {
+      fieldName: 'timestamp',
+      fieldType: 'integer',
+    });
+    this.logger.log('Created indexes successfully');
   }
 
   /**
@@ -383,10 +343,7 @@ export class RAGService implements OnModuleInit {
         return;
       }
 
-      await this.qdrantClient.upsert(this.collectionName, {
-        wait: true,
-        points,
-      });
+      await this.vectorDB.upsert(this.collectionName, points);
 
       this.logger.log(
         `[VECTOR-STORAGE] Successfully stored ${points.length} context-aware chunks for meeting ${meetingId}`,
@@ -421,8 +378,8 @@ export class RAGService implements OnModuleInit {
       // Generate embedding for the question
       const questionEmbedding = await this.generateEmbedding(question);
 
-      // Search Qdrant with filters
-      const searchResults = await this.qdrantClient.search(
+      // Search vector DB with filters
+      const searchResults = await this.vectorDB.search(
         this.collectionName,
         {
           vector: questionEmbedding,
@@ -435,7 +392,7 @@ export class RAGService implements OnModuleInit {
               },
             ],
           },
-          with_payload: true,
+          withPayload: true,
         },
       );
 
@@ -488,12 +445,7 @@ export class RAGService implements OnModuleInit {
         .replace('{{context}}', context)
         .replace('{{question}}', question);
 
-      // Call Gemini API
-      const result = await this.genAI.models.generateContent({
-        model: 'gemini-2.0-flash-001',
-        contents: prompt,
-      });
-
+      const result = await this.aiModel.generateContent(prompt);
       const answer = result.text || 'Unable to generate answer.';
 
       // Create source citations (first 100 chars of each result)
