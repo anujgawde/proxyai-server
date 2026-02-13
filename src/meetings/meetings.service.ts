@@ -17,7 +17,6 @@ import { QAEntry } from 'src/entities/qa-entry.entity';
 import { RAGService } from 'src/rag/rag.service';
 import axios from 'axios';
 import {
-  BotStateTriggerData,
   BotWebhookDto,
   ScheduleBotParams,
   ScheduledBot,
@@ -31,6 +30,7 @@ import {
 } from './services/meeting-stream.service';
 import { PaginatedResponse } from 'src/common';
 export type { MeetingEvent, TranscriptEvent, SummaryEvent };
+import { MeetingStateMachine } from './states';
 @Injectable()
 export class MeetingsService {
   private readonly logger = new Logger(MeetingsService.name);
@@ -49,6 +49,8 @@ export class MeetingsService {
     private transcriptsService: TranscriptsService,
     private ragService: RAGService,
     private meetingStreamService: MeetingStreamService,
+
+    private meetingStateMachine: MeetingStateMachine,
   ) {}
 
   /**
@@ -184,23 +186,6 @@ export class MeetingsService {
 
     return results;
   }
-  /**
-   * BOT STATE → MEETING STATUS MAPPING
-   * This is CRITICAL for correct Upcoming → Live → Past transitions
-   */
-  private readonly BOT_STATE_TO_MEETING_STATUS: Record<
-    string,
-    MeetingStatus | undefined
-  > = {
-    joining: MeetingStatus.LIVE,
-    joined_not_recording: MeetingStatus.LIVE,
-    joined_recording: MeetingStatus.LIVE,
-
-    post_processing: MeetingStatus.PAST,
-    ended: MeetingStatus.PAST,
-    left: MeetingStatus.PAST,
-    fatal_error: MeetingStatus.PAST,
-  };
 
   /*
    * Send a meeting bot state change to the user
@@ -217,24 +202,32 @@ export class MeetingsService {
 
     if (!meeting) return;
 
-    const newStatus = this.BOT_STATE_TO_MEETING_STATUS[botData.new_state];
+    // State Machine for validated transitions
+    const result = await this.meetingStateMachine.transitionFromBotState(
+      meeting,
+      botData.new_state,
+    );
 
-    if (!newStatus || meeting.status === newStatus) {
+    if (!result.success) {
+      if (result.error) {
+        this.logger.warn(
+          `State transition failed for meeting ${meeting.id}: ${result.error}`,
+        );
+      }
       return;
     }
 
-    meeting.status = newStatus;
-    await this.meetingsRepository.save(meeting);
+    // save and emit if status changed
+    if (result.previousStatus !== result.newStatus) {
+      await this.meetingsRepository.save(meeting);
 
-    if (newStatus === MeetingStatus.PAST) {
-      await this.transcriptsService.flushAndClearMeeting(meeting.id);
+      // Emit status update via stream service
+      this.meetingStreamService.emitMeetingStatusUpdate(
+        meeting.userId,
+        meeting.id,
+        meeting.status,
+      );
     }
-
-    this.meetingStreamService.emitMeetingStatusUpdate(
-      meeting.userId,
-      meeting.id,
-      meeting.status,
-    );
   }
 
   async handleTranscriptUpdate(payload: any): Promise<void> {
