@@ -39,11 +39,11 @@ import {
     RAGModule,
     ProvidersModule,
     InfrastructureModule,
-    MeetingStreamService,
   ],
   controllers: [MeetingsController],
   providers: [
     MeetingsService,
+    MeetingStreamService,
     FirebaseService,
     FirebaseAuthGuard,
     TranscriptsService,

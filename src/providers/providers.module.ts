@@ -45,6 +45,6 @@ import { ProvidersGoogleService } from './providers-google.service';
     ProvidersZoomService,
     ProvidersGoogleService,
   ],
-  exports: [CalendarWatchService, ProvidersGoogleService],
+  exports: [CalendarWatchService, ProvidersGoogleService, ProviderRegistryService],
 })
 export class ProvidersModule {}
