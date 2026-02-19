@@ -9,7 +9,6 @@ import firebaseConfig from './config/firebase.config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MeetingsModule } from './meetings/meetings.module';
 import { TranscriptEntry } from './entities/transcript-entry.entity';
-import { GeminiService } from './gemini/gemini.service';
 import { QAEntry } from './entities/qa-entry.entity';
 import { RAGModule } from './rag/rag.module';
 import { ProvidersModule } from './providers/providers.module';
@@ -69,6 +68,6 @@ import { WebhookModule } from './webhook/webhook.module';
     WebhookModule,
   ],
   controllers: [AppController],
-  providers: [AppService, TranscriptEntry, QAEntry, GeminiService],
+  providers: [AppService, TranscriptEntry, QAEntry],
 })
 export class AppModule {}
